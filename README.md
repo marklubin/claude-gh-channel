@@ -54,17 +54,16 @@ gh auth login --scopes repo
 Then:
 
 ```bash
-# 1. Clone the plugin somewhere stable
+# 1. Clone + install server deps
 git clone https://github.com/marklubin/claude-gh-channel ~/claude-gh-channel
-cd ~/claude-gh-channel && (cd server && bun install)
+cd ~/claude-gh-channel && (cd plugins/claude-gh-channel/server && bun install)
 
-# 2. Tell Claude Code about the plugin
-#    (from any Claude session)
-/plugin install file:///$HOME/claude-gh-channel
+# 2. From any Claude session, add the marketplace + install the plugin:
+/plugin marketplace add marklubin/claude-gh-channel
+/plugin install claude-gh-channel@marklubin
 
 # 3. Bootstrap — generates a webhook secret, starts a cloudflared tunnel,
 #    registers the GH webhook on a repo you choose, writes config.yaml.
-#    The command walks you through it interactively.
 /gh-channel-setup
 
 # 4. Attach a watcher session in any terminal or cmux pane:
@@ -239,30 +238,34 @@ Edit `~/.config/claude-gh-channel/config.yaml`, add another entry under `subscri
 ## Repository layout
 
 ```
-claude-gh-channel/
-├── .claude-plugin/plugin.json   # Plugin manifest
-├── .mcp.json                    # Registers the `gh-channel` MCP server
-├── server/                      # Channel server: HTTP + MCP stdio
-│   ├── index.ts                 # Main loop + HTTP endpoints
-│   ├── config.ts                # YAML loader + templating
-│   ├── filters.ts               # Subscription + routing-hint evaluator
-│   ├── queue.ts                 # bun:sqlite queue + dedup
-│   └── reply.ts                 # `channel_reply` MCP tool
-├── config/
-│   ├── schema.json              # JSON schema for config.yaml
-│   ├── example.yaml             # Starter config (setup substitutes placeholders)
-│   └── default-brief.md         # Templated agent_brief
-├── commands/                    # Nine slash commands (setup + lifecycle)
-├── skills/                      # Four handler skills + shared contract
-├── installer/                   # macOS launchd template + install/uninstall
-├── docs/walkthrough.md          # Deep dive with file layouts + debugging
-├── spike/                       # M0-M5 evidence — read these to understand decisions
-│   ├── 0.1-channel-roundtrip/   # Channel capability proven
-│   ├── 0.2-reply-tool/          # MCP tool round-trip proven
-│   ├── 0.3-bg-session-viability/ # 24h heartbeat (not run to completion)
-│   ├── 0.4-multi-session/       # Why channels are per-session
-│   ├── 0.5-gh-roundtrip/        # Real-GH end-to-end proof
-│   └── M2-M5-INTEGRATION-EVIDENCE.md  # Full M2-M4 layer + final E2E
+claude-gh-channel/                       # marketplace root (this repo)
+├── .claude-plugin/
+│   └── marketplace.json                 # Marketplace manifest
+├── plugins/
+│   └── claude-gh-channel/               # The plugin itself
+│       ├── .claude-plugin/plugin.json   # Plugin manifest
+│       ├── .mcp.json                    # Registers the `gh-channel` MCP server
+│       ├── server/                      # Channel server: HTTP + MCP stdio
+│       │   ├── index.ts                 # Main loop + HTTP endpoints
+│       │   ├── config.ts                # YAML loader + templating
+│       │   ├── filters.ts               # Subscription + routing-hint evaluator
+│       │   ├── queue.ts                 # bun:sqlite queue + dedup
+│       │   └── reply.ts                 # `channel_reply` MCP tool
+│       ├── config/
+│       │   ├── schema.json              # JSON schema for config.yaml
+│       │   ├── example.yaml             # Starter config
+│       │   └── default-brief.md         # Templated agent_brief
+│       ├── commands/                    # Nine slash commands (setup + lifecycle)
+│       ├── skills/                      # Four handler skills + shared contract
+│       └── installer/                   # macOS launchd template + install/uninstall
+├── docs/walkthrough.md                  # Deep dive with file layouts + debugging
+├── spike/                               # M0-M5 evidence — read these to understand decisions
+│   ├── 0.1-channel-roundtrip/           # Channel capability proven
+│   ├── 0.2-reply-tool/                  # MCP tool round-trip proven
+│   ├── 0.3-bg-session-viability/        # 24h heartbeat (not run to completion)
+│   ├── 0.4-multi-session/               # Why channels are per-session
+│   ├── 0.5-gh-roundtrip/                # Real-GH end-to-end proof
+│   └── M2-M5-INTEGRATION-EVIDENCE.md    # Full M2-M4 layer + install E2E
 └── README.md
 ```
 
