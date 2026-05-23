@@ -1,0 +1,11 @@
+{
+  "name": "claude-gh-channel",
+  "version": "0.1.0",
+  "description": "Surface GitHub PR/issue/review events into a persistent background Claude session via the MCP channels API. Personal-use; configure once, watch from anywhere.",
+  "author": {
+    "name": "Mark Lubin",
+    "email": "mark@kinelo.com"
+  },
+  "repository": "https://github.com/marklubin/claude-gh-channel",
+  "keywords": ["github", "channels", "mcp", "webhook", "pr-review"]
+}
