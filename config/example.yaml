@@ -12,9 +12,12 @@
 version: 1
 
 user:
-  github_username: ${env:GITHUB_USERNAME}
-  display_name: Mark
-  tunnel_url: ${env:CHANNEL_TUNNEL_URL}   # cloudflared URL; setup writes it for you
+  # /gh-channel-setup substitutes this with `gh api user --jq .login` at install time.
+  github_username: __GITHUB_USERNAME__
+  display_name: __DISPLAY_NAME__
+  # tunnel_url is informational here — the webhook URL is registered with
+  # GH at setup time; this field is just so other tools can read it.
+  tunnel_url: __TUNNEL_URL__
 
 vars:
   todo_path: ~/command-center/todo.md
