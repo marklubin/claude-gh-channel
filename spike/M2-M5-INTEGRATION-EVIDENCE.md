@@ -230,3 +230,189 @@ on the host. Tool call → handler → cmux side effect chain works.
 
 `~/.config/claude-gh-channel/config.yaml` + `~/.config/claude-gh-channel/secret`
 remain in place — re-running the smoke is a webhook-create + tunnel-up away.
+
+---
+
+## Addendum 2: install-verified E2E (2026-05-23, continued)
+
+The 0.5 spike used `--dangerously-load-development-channels` with a local
+.mcp.json pointing at the spike's `server.ts`. The earlier addendum above
+proved real GH → new layered server → Claude pane, also via the dev-channel
+flag but pointed at the plugin source directory.
+
+This addendum closes the last gap: real GH → **installed plugin** → watcher
+pane. Same end-to-end flow, but the server is spawned from the cached install
+path, not the source repo.
+
+### What was different about this path
+
+Two structural changes had to land first:
+
+**1. Restructure to standard marketplace pattern (commit `bfb15e3`).** The
+initial marketplace.json used `source: "."` to say "the plugin is in this
+same directory as the marketplace manifest." Claude Code rejected that as an
+unsupported source type — the docs confirm only relative paths to a
+**subdirectory** are valid (`./plugins/<name>`). Restructured via `git mv`:
+
+```
+claude-gh-channel/                          # marketplace root
+├── .claude-plugin/marketplace.json         # marketplace manifest
+├── plugins/
+│   └── claude-gh-channel/                  # plugin (formerly at repo root)
+│       ├── .claude-plugin/plugin.json
+│       ├── .mcp.json
+│       ├── server/ commands/ skills/ config/ installer/
+└── docs/  spike/  README.md                # reference; not part of plugin
+```
+
+**2. Declare the channel in `plugin.json` (commit `2b48fc6`).** Without
+this, `--channels plugin:claude-gh-channel@marklubin` would load the
+listener but block events as "not on the approved channels allowlist." Per
+[plugins-reference#channels], a plugin must explicitly list its channels:
+
+```json
+"channels": [{ "server": "gh-channel" }]
+```
+
+The `server` value matches the key in the plugin's `.mcp.json`.
+
+### Install path
+
+From a fresh Claude session (no plugin loaded):
+
+```
+/plugin marketplace add marklubin/claude-gh-channel
+/plugin install claude-gh-channel@marklubin
+```
+
+Claude Code shows a confirmation card with scope choices:
+- Install for you (user scope) — chosen
+- Install for all collaborators on this repository (project scope)
+- Install for you, in this repo only (local scope)
+
+Confirm → "Installed claude-gh-channel. Run /reload-plugins to apply."
+After `/reload-plugins`, `/mcp` shows the new connection alongside
+existing servers:
+
+```
+plugin:claude-gh-channel:gh-channel · ✔ connected · 1 tool
+```
+
+The single tool is `channel_reply`. `installed_plugins.json` grows the
+entry with `scope: user`, `installPath: ~/.claude/plugins/cache/marklubin/claude-gh-channel/0.1.0/`,
+`gitCommitSha: bfb15e3...`.
+
+### Bump-to-trigger-cache-refresh gotcha
+
+The cache lives at `~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/`,
+keyed on the `version` field in `plugin.json`. When I edited plugin.json
+without bumping the version (added the `channels` declaration in commit
+`2b48fc6`), the marketplace update ran (`✔ Updated 1 marketplace`) but the
+cached install kept the old plugin.json without `channels`. Symptom: watcher
+still got the allowlist warning.
+
+Fix: bumped to `0.1.1` (commit `fb98cec`). The marketplace update then
+showed `(1 plugin bumped)` and `/plugin install` automatically copied the
+new version into a fresh `0.1.1/` cache directory. `installed_plugins.json`
+updated to point at the new path.
+
+Docs confirm: "users only receive updates when you bump this field [version]."
+
+### node_modules gotcha
+
+The marketplace install copies plugin files BUT NOT `server/node_modules/`
+(it's gitignored). So immediately after install, the MCP server failed to
+start because `@modelcontextprotocol/sdk` was missing in the cache. Fix
+done manually: `cd ~/.claude/plugins/cache/marklubin/claude-gh-channel/0.1.1/server && bun install`.
+
+Real follow-up: for a shipped plugin, either bundle the server (single-file
+build with `bun build --compile`) or document a `bun install` post-install
+step. The README's `git clone` instructions assume the source tree; the
+in-marketplace install needs equivalent guidance — currently undocumented.
+
+### Watcher attach syntax
+
+Mistake on first attempt: `claude --channels plugin:claude-gh-channel:gh-channel`
+(treating it like the dev `server:NAME` format). Correct form per Claude
+Code's help text:
+
+```
+plugin:<name>@<marketplace>   plugin-provided channel (allowlist enforced)
+server:<name>                  manually configured MCP server
+```
+
+So: `claude --dangerously-load-development-channels plugin:claude-gh-channel@marklubin`.
+
+Per channels-reference: "A channel published to your own marketplace still
+needs `--dangerously-load-development-channels` to run, since it isn't on
+the approved allowlist. The default allowlist is the channel plugins in
+`claude-plugins-official`, which Anthropic curates at its discretion."
+
+So the dev-channel flag isn't a development-only stopgap — it's the
+expected attachment mode for any self-published channel plugin during the
+research preview.
+
+### The actual E2E
+
+```
+[INSTALLED PLUGIN] ──spawns──► [bun PID 99449 from ~/.claude/plugins/cache/marklubin/claude-gh-channel/0.1.1/server/index.ts]
+                                          │
+                                  binds 127.0.0.1:8788
+                                          │
+[GH PR #3 opened] ──webhook──► [cloudflared] ──► localhost:8788/webhook
+                                                          │
+                                          HMAC + subscription + routing-hint
+                                                          │
+                                          notifications/claude/channel
+                                                          │
+                                          watcher Claude pane (surface:20)
+```
+
+Watcher pane output (exact echo):
+
+```
+← gh-channel: [PR opened] marklubin/claude-gh-channel#3 "Install-verified…
+⏺ pull_request | marklubin/claude-gh-channel#3 | opened | marklubin | pr-triage | normal
+```
+
+The `suggested_skill: pr-triage` and `priority: normal` are from the
+`routing_hints` in `~/.config/claude-gh-channel/config.yaml`, evaluated by
+the **installed plugin's** `server/filters.ts` against the real GH payload.
+
+### Cleanup performed
+
+- Webhook 629414936 deleted (`gh api -X DELETE`)
+- PR #3 closed, branch `spike/install-verified-smoke` deleted local + remote
+- cloudflared tunnel stopped
+- Claude side pane closed
+- Port 8788 free
+- 0 webhooks remaining on the repo
+
+### What the install path proves
+
+Independent of the dev-mode source-loading path that 0.5 + addendum 1
+proved:
+
+| Capability | Verified |
+|---|---|
+| `/plugin marketplace add <owner/repo>` resolves GitHub shorthand | ✅ |
+| `/plugin install <plugin>@<marketplace>` copies cache + registers MCP | ✅ |
+| Cached install starts MCP server via plugin's .mcp.json | ✅ |
+| `/mcp` lists the installed-plugin MCP server | ✅ |
+| `channels` declaration in plugin.json puts the channel on the dev-flag-eligible list | ✅ |
+| `--dangerously-load-development-channels plugin:NAME@MP` subscribes the watcher | ✅ |
+| Real GH webhook flows through the installed plugin's server | ✅ |
+| Routing hints from user config layer over installed server | ✅ |
+| Version-bump-to-refresh-cache is the update path | ✅ |
+
+### Known gaps for shipping
+
+1. **`bun install` not run in cache** — first-attach fails until manually
+   resolved. Either bundle the server or add a post-install hook (if Claude
+   Code supports them) or document the install step.
+2. **Channel allowlist requires `--dangerously-load-development-channels`**
+   for all self-published plugins. Workaround for personal use, blocker
+   for any "just install and run" UX. Out of our control; Anthropic-side
+   allowlist policy.
+3. **Cache update requires version bump** — silent no-op without it. Worth
+   mentioning in the docs.
