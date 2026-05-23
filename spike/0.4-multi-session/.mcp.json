@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "spike": {
+      "command": "bun",
+      "args": ["./server.ts"]
+    }
+  }
+}
