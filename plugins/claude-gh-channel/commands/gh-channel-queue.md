@@ -63,7 +63,7 @@ SQL
 ```
 
 Notes on the columns:
-- `id` is truncated to first 8 chars of the GitHub delivery UUID. `/gh-channel-replay <id>` accepts either the prefix (if unambiguous) or the full id.
+- `id` is truncated to first 8 chars of the GitHub delivery UUID. `/claude-gh-channel:gh-channel-replay <id>` accepts either the prefix (if unambiguous) or the full id.
 - `emitted=no` means the row is queued but no attached Claude session has consumed it yet. That's normal if the watcher isn't running.
 - `action` is null for events like `ping`; we coerce to `-` for table alignment.
 
@@ -86,7 +86,7 @@ SQL
 
 Based on what you see, add at most one actionable line:
 - Pending > 0 AND no watcher attached → "Attach a session with `claude --channels plugin:claude-gh-channel:gh-channel` to drain."
-- Pending > 100 → "Queue is large — consider `/gh-channel-pause resume` if you intended to be receiving, or `/gh-channel-disable` if you didn't."
-- Specific row of interest → "Replay with `/gh-channel-replay <delivery_id>`."
+- Pending > 100 → "Queue is large — consider `/claude-gh-channel:gh-channel-pause resume` if you intended to be receiving, or `/claude-gh-channel:gh-channel-disable` if you didn't."
+- Specific row of interest → "Replay with `/claude-gh-channel:gh-channel-replay <delivery_id>`."
 
 Otherwise, no editorializing. This command is a `cat`, not a `fix`.

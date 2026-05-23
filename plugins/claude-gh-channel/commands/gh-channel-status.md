@@ -4,7 +4,7 @@ description: Read-only snapshot of claude-gh-channel health — tunnel up, watch
 
 # /gh-channel-status
 
-Print a single status report. Run all checks in parallel where possible. Do not attempt to fix anything — this is a diagnostic only. If something looks broken, point at the right command (`/gh-channel-enable`, `/gh-channel-reload`, etc.) rather than acting.
+Print a single status report. Run all checks in parallel where possible. Do not attempt to fix anything — this is a diagnostic only. If something looks broken, point at the right command (`/claude-gh-channel:gh-channel-enable`, `/claude-gh-channel:gh-channel-reload`, etc.) rather than acting.
 
 ## Step 1 — Verify config exists
 
@@ -12,7 +12,7 @@ Print a single status report. Run all checks in parallel where possible. Do not 
 test -f ~/.config/claude-gh-channel/config.json || echo "NOT_CONFIGURED"
 ```
 
-If missing, stop and tell the user to run `/gh-channel-setup` first. Do not continue.
+If missing, stop and tell the user to run `/claude-gh-channel:gh-channel-setup` first. Do not continue.
 
 Load the basics for later steps:
 ```bash
@@ -89,10 +89,10 @@ Queue           total=<n>  pending=<n>  latest=<ts or "—">
 ```
 
 Below the table, surface red flags as bullets:
-- Tunnel down → suggest `/gh-channel-enable`.
+- Tunnel down → suggest `/claude-gh-channel:gh-channel-enable`.
 - Watcher none → tell user `claude --channels plugin:claude-gh-channel:gh-channel` in a fresh pane (events queue to SQLite regardless; they won't be lost).
-- GH webhook `active=false` → `/gh-channel-enable` will flip it.
-- GH `last_response.code` ≥ 400 → tunnel URL may have rotated; suggest `/gh-channel-reload` after restarting cloudflared.
+- GH webhook `active=false` → `/claude-gh-channel:gh-channel-enable` will flip it.
+- GH `last_response.code` ≥ 400 → tunnel URL may have rotated; suggest `/claude-gh-channel:gh-channel-reload` after restarting cloudflared.
 - `pause_until` in the future → mention how long until it lifts.
 
 Do not modify anything. The whole command is read-only.

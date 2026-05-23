@@ -6,14 +6,14 @@
   },
   "metadata": {
     "description": "Personal Claude Code plugins by Mark Lubin",
-    "version": "0.1.2"
+    "version": "0.1.3"
   },
   "plugins": [
     {
       "name": "claude-gh-channel",
       "source": "./plugins/claude-gh-channel",
       "description": "GitHub PR events surfaced live into a persistent Claude Code session via the experimental MCP channels API. Drafts replies, flags risky diffs, tracks merged-PR follow-ups. macOS, single watcher, personal use.",
-      "version": "0.1.2",
+      "version": "0.1.3",
       "category": "integration",
       "tags": ["github", "channels", "pr-review", "webhook", "mcp"]
     }

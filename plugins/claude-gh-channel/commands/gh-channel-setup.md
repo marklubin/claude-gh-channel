@@ -194,7 +194,7 @@ bash ${CLAUDE_PLUGIN_ROOT}/installer/install-launchd.sh
 ```
 
 Important caveats to surface to the user before they accept:
-- **Quick-tunnel URLs rotate every cloudflared restart, including on reboot.** With `KeepAlive=true`, every reboot mints a fresh `*.trycloudflare.com` URL and the GitHub webhook will silently 404 until the user re-runs `/gh-channel-setup` to patch it. This is the central v1 wart.
+- **Quick-tunnel URLs rotate every cloudflared restart, including on reboot.** With `KeepAlive=true`, every reboot mints a fresh `*.trycloudflare.com` URL and the GitHub webhook will silently 404 until the user re-runs `/claude-gh-channel:gh-channel-setup` to patch it. This is the central v1 wart.
 - The clean fix is a **named tunnel** (`cloudflared tunnel create`) which gives a stable hostname — deferred to milestone M4.1. If the user reboots often, suggest they wait for M4.1 rather than installing the plist now.
 - The plist manages **cloudflared only**. The Claude watcher session is still interactive — the user must open a cmux pane and run `claude --channels plugin:claude-gh-channel:gh-channel` themselves. Auto-starting an interactive Claude session from launchd is a v2 problem.
 

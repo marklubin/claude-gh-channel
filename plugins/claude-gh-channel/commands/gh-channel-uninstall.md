@@ -6,7 +6,7 @@ description: Tear down claude-gh-channel — delete GH webhook, stop cloudflared
 
 Destructive. The only command in this plugin that mutates remote state (the GH webhook) and kills running processes without restarting them. Always confirm before acting.
 
-We deliberately leave the user's config + secret in place so reinstall is a single `/gh-channel-setup` away (it will detect the existing secret and offer to reuse it). If they want a true scorched-earth reset, they delete `~/.config/claude-gh-channel/` by hand.
+We deliberately leave the user's config + secret in place so reinstall is a single `/claude-gh-channel:gh-channel-setup` away (it will detect the existing secret and offer to reuse it). If they want a true scorched-earth reset, they delete `~/.config/claude-gh-channel/` by hand.
 
 ## Step 1 — Gather what will be removed
 
@@ -41,7 +41,7 @@ Options:
 - "Yes, uninstall" → proceed.
 - "Cancel" → exit cleanly.
 
-If the user wants to keep the webhook configured but just turn things off, redirect them to `/gh-channel-disable` and exit.
+If the user wants to keep the webhook configured but just turn things off, redirect them to `/claude-gh-channel:gh-channel-disable` and exit.
 
 ## Step 3 — Delete the GitHub webhook
 

@@ -13,7 +13,7 @@ git clone https://github.com/marklubin/claude-gh-channel ~/claude-gh-channel
 
 # 3. In a Claude Code session
 /plugin install file://$HOME/claude-gh-channel
-/gh-channel-setup
+/claude-gh-channel:gh-channel-setup
 
 # 4. In another terminal, attach a watcher session
 claude --channels plugin:claude-gh-channel:gh-channel
@@ -81,13 +81,13 @@ From a Claude Code session anywhere:
 
 That registers:
 - The MCP server (`gh-channel`) from the plugin's `.mcp.json`
-- The `/gh-channel-*` slash commands from `commands/`
+- The slash commands from `commands/` (namespaced as `/claude-gh-channel:<name>` in your session)
 - The handler skills from `skills/`
 
 ### 3. Bootstrap
 
 ```
-/gh-channel-setup
+/claude-gh-channel:gh-channel-setup
 ```
 
 This walks you through:
@@ -142,17 +142,18 @@ Within 1-2 seconds, the watcher pane shows:
 
 | Command | What it does |
 |---|---|
-| `/gh-channel-status` | Snapshot: tunnel up? webhook active? session attached? queue depth? |
-| `/gh-channel-enable` | Master ON — tunnel up, webhook active, runtime.enabled=true |
-| `/gh-channel-disable` | Master OFF — webhook inactive, tunnel can stay up. Reversible. |
-| `/gh-channel-pause 2h` | Queue events but don't emit for the window |
-| `/gh-channel-pause quiet` | Quiet mode — same effect, no time window |
-| `/gh-channel-pause pause-repo <r>` | Skip one repo |
-| `/gh-channel-pause resume` | Clear all pause/quiet/disabled-repo state |
-| `/gh-channel-reload` | Reload config.yaml; user re-attaches |
-| `/gh-channel-queue` | Show pending + recent queue rows |
-| `/gh-channel-replay <delivery_id>` | Re-emit a specific event from the queue |
-| `/gh-channel-uninstall` | Tear it all down (with confirmation) |
+| `/claude-gh-channel:gh-channel-status` | Snapshot: tunnel up? webhook active? session attached? queue depth? |
+| `/claude-gh-channel:gh-channel-enable` | Master ON — tunnel up, webhook active, runtime.enabled=true |
+| `/claude-gh-channel:gh-channel-disable` | Master OFF — webhook inactive, tunnel can stay up. Reversible. |
+| `/claude-gh-channel:gh-channel-pause 2h` | Queue events but don't emit for the window |
+| `/claude-gh-channel:gh-channel-pause quiet` | Quiet mode — same effect, no time window |
+| `/claude-gh-channel:gh-channel-pause pause-repo <r>` | Skip one repo |
+| `/claude-gh-channel:gh-channel-pause resume` | Clear all pause/quiet/disabled-repo state |
+| `/claude-gh-channel:gh-channel-reload` | Reload config.yaml; user re-attaches |
+| `/claude-gh-channel:gh-channel-queue` | Show pending + recent queue rows |
+| `/claude-gh-channel:gh-channel-replay <delivery_id>` | Re-emit a specific event from the queue |
+| `/claude-gh-channel:gh-channel-pin pr <url> --hard\|--soft` | Focus the watcher on one PR (auto-clears on close) |
+| `/claude-gh-channel:gh-channel-uninstall` | Tear it all down (with confirmation) |
 
 ## What the handler skills do
 
@@ -171,10 +172,10 @@ Cloudflared **quick tunnels** rotate URLs on every restart. Practical consequenc
 
 Two fixes, by effort:
 
-- **Cheap**: re-run `/gh-channel-setup` after reboot. It detects the new URL and updates the webhook.
+- **Cheap**: re-run `/claude-gh-channel:gh-channel-setup` after reboot. It detects the new URL and updates the webhook.
 - **Right**: switch to a cloudflared **named tunnel** with a DNS record you control. That's a one-time setup, stable URL, no rotation. Not in v1.
 
-`/gh-channel-status` will tell you if the configured webhook URL doesn't match the currently-running tunnel.
+`/claude-gh-channel:gh-channel-status` will tell you if the configured webhook URL doesn't match the currently-running tunnel.
 
 ## When events drop (and how you know)
 
@@ -185,7 +186,7 @@ The MCP server lives inside the Claude session. When no session is attached:
 
 Symptoms:
 - `gh api repos/<repo>/hooks/<id>/deliveries --jq '.[] | select(.status_code != 200)'` shows non-200 deliveries
-- `/gh-channel-status` reports "no watcher attached"
+- `/claude-gh-channel:gh-channel-status` reports "no watcher attached"
 
 Workaround for v1: keep a watcher session pinned. The launchd plist can keep cloudflared up, but launchd can't sensibly keep an interactive `claude` going — that's why the design doc's full daemon split (separate webhook receiver process + thin MCP clients) is the right v2 fix.
 
@@ -193,7 +194,7 @@ Workaround for v1: keep a watcher session pinned. The launchd plist can keep clo
 
 The watcher Claude accumulates context as events stream in. Two practical strategies:
 
-1. **Periodic restart**: `cmd-shift-c` (compact) the session daily, or run `/gh-channel-reload` weekly. Drains the queue on re-attach so nothing is lost.
+1. **Periodic restart**: `cmd-shift-c` (compact) the session daily, or run `/claude-gh-channel:gh-channel-reload` weekly. Drains the queue on re-attach so nothing is lost.
 2. **Skill discipline**: Skills must NOT echo huge diffs into the channel response. They write drafts to disk and emit only short status messages. This keeps the conversation channel lean even when handling 50 events/day.
 
 ## Cleanup
@@ -201,7 +202,7 @@ The watcher Claude accumulates context as events stream in. Two practical strate
 To wipe completely:
 
 ```
-/gh-channel-uninstall
+/claude-gh-channel:gh-channel-uninstall
 ```
 
 That deletes the webhook, stops cloudflared (and removes plist if installed), archives the SQLite DB. It leaves `config.yaml` and the secret so reinstall is one command.
@@ -218,19 +219,19 @@ rm -rf ~/.config/claude-gh-channel ~/.local/share/claude-gh-channel
 
 The MCP notification was sent but Claude's context isn't reading it. Usually means Claude is mid-tool-call or compaction. Wait a tick or `cmd-shift-c` and check again.
 
-### `/gh-channel-status` says webhook returns 401
+### `/claude-gh-channel:gh-channel-status` says webhook returns 401
 
 Secret mismatch between `~/.config/claude-gh-channel/secret` and the GH webhook config. Either:
-- Run `/gh-channel-setup` again to regenerate + update GH side
+- Run `/claude-gh-channel:gh-channel-setup` again to regenerate + update GH side
 - Or manually: `gh api -X PATCH repos/<repo>/hooks/<id> -f config[secret]="$(cat ~/.config/claude-gh-channel/secret)"`
 
 ### Tunnel URL changed but webhook still points at the old one
 
-Run `/gh-channel-setup` — it's idempotent and will update the URL on the existing webhook.
+Run `/claude-gh-channel:gh-channel-setup` — it's idempotent and will update the URL on the existing webhook.
 
 ### Server won't start: "config: ~/.config/claude-gh-channel/config.yaml not found"
 
-You haven't run `/gh-channel-setup` yet. Run it.
+You haven't run `/claude-gh-channel:gh-channel-setup` yet. Run it.
 
 ### Server crashed mid-session
 

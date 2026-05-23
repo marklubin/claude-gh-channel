@@ -6,7 +6,7 @@ description: Turn the claude-gh-channel OFF — flip GH webhook active=false and
 
 Stop receiving events without tearing anything down. The webhook stays registered (just inactive) and the cloudflared tunnel keeps running — this is the "I want a clean inbox for a few days" lever, not the uninstall path.
 
-For full teardown, use `/gh-channel-uninstall`. For a time-boxed pause, use `/gh-channel-pause`.
+For full teardown, use `/claude-gh-channel:gh-channel-uninstall`. For a time-boxed pause, use `/claude-gh-channel:gh-channel-pause`.
 
 ## Step 1 — Preconditions
 
@@ -32,7 +32,7 @@ else
 fi
 ```
 
-If the GH API returns 404, the webhook has been deleted out from under us. Tell the user and stop — they probably want `/gh-channel-setup` to re-register, not `/gh-channel-disable`.
+If the GH API returns 404, the webhook has been deleted out from under us. Tell the user and stop — they probably want `/claude-gh-channel:gh-channel-setup` to re-register, not `/claude-gh-channel:gh-channel-disable`.
 
 ## Step 3 — Set runtime.enabled=false in config
 
@@ -50,7 +50,7 @@ This is the second line of defense: even if GitHub redelivers a buffered event, 
 
 Do NOT kill cloudflared. Do NOT remove the webhook. The whole point of disable (vs uninstall) is that re-enabling is one command.
 
-If a watcher session is attached and you want it to pick up the new config without a restart, tell the user to run `/gh-channel-reload`. Otherwise the server will see the flag on its next config-poll cycle (or next process start).
+If a watcher session is attached and you want it to pick up the new config without a restart, tell the user to run `/claude-gh-channel:gh-channel-reload`. Otherwise the server will see the flag on its next config-poll cycle (or next process start).
 
 ## Step 5 — Report
 
@@ -58,8 +58,8 @@ One short paragraph:
 - Webhook on `$REPO`: now inactive (GH will not deliver until re-enabled).
 - `runtime.enabled` in config: false.
 - Tunnel + watcher: left running. Public URL still in `~/.config/claude-gh-channel/tunnel-url`.
-- To turn back on: `/gh-channel-enable` (idempotent, ~5s).
-- To tear down fully: `/gh-channel-uninstall`.
+- To turn back on: `/claude-gh-channel:gh-channel-enable` (idempotent, ~5s).
+- To tear down fully: `/claude-gh-channel:gh-channel-uninstall`.
 
 Surface the current queue depth in passing so the user knows whether to drain it before re-enabling:
 ```bash

@@ -12,7 +12,7 @@ It's a personal tool. macOS, single laptop, one watcher Claude at a time.
 - **Steering, not just streaming.** A YAML config tells the watcher what to care about: which repos, which authors to ignore, which events should trigger which prep work. You configure once and forget.
 - **Four built-in skills** for the most common PR moments: triage a PR you just opened, prep for a review you've been requested on, draft a reply to someone's comment, scan a merged PR's description for follow-up TODOs.
 - **Drafts only.** Skills write to `~/.config/claude-gh-channel/drafts/` and surface status to your cmux sidebar. They never post to GitHub.
-- **Durable queue.** Every event lands in SQLite first. If your watcher session died, restart it and it replays what you missed. Same for `/gh-channel-pause 2h` — events queue but don't emit until you un-pause.
+- **Durable queue.** Every event lands in SQLite first. If your watcher session died, restart it and it replays what you missed. Same for `/claude-gh-channel:gh-channel-pause 2h` — events queue but don't emit until you un-pause.
 - **Lifecycle commands** for everything you'd want to do operationally: status, enable/disable, pause, reload config, inspect the queue, replay a specific event, uninstall.
 
 ## What it looks like
@@ -64,7 +64,7 @@ cd ~/claude-gh-channel && (cd plugins/claude-gh-channel/server && bun install)
 
 # 3. Bootstrap — generates a webhook secret, starts a cloudflared tunnel,
 #    registers the GH webhook on a repo you choose, writes config.yaml.
-/gh-channel-setup
+/claude-gh-channel:gh-channel-setup
 
 # 4. Attach a watcher session in any terminal or cmux pane:
 claude --channels plugin:claude-gh-channel:gh-channel
@@ -76,7 +76,7 @@ That's it. Open a PR in the repo you wired up and watch it land.
 
 ## Configure what you watch
 
-Your config lives at `~/.config/claude-gh-channel/config.yaml`. The setup command scaffolds it from [`config/example.yaml`](config/example.yaml), substituting your GitHub login and the chosen repo. Edit it any time and run `/gh-channel-reload` to apply changes without restarting the watcher.
+Your config lives at `~/.config/claude-gh-channel/config.yaml`. The setup command scaffolds it from [`config/example.yaml`](config/example.yaml), substituting your GitHub login and the chosen repo. Edit it any time and run `/claude-gh-channel:gh-channel-reload` to apply changes without restarting the watcher.
 
 The four important sections:
 
@@ -124,12 +124,12 @@ Variables interpolate into the brief at load time: `${user.github_username}`, `$
 ```yaml
 runtime:
   http_port: 8788
-  quiet_mode: false       # toggle with /gh-channel-pause quiet
-  pause_until: null       # set by /gh-channel-pause 2h
-  disabled_repos: []      # set by /gh-channel-pause pause-repo
+  quiet_mode: false       # toggle with /claude-gh-channel:gh-channel-pause quiet
+  pause_until: null       # set by /claude-gh-channel:gh-channel-pause 2h
+  disabled_repos: []      # set by /claude-gh-channel:gh-channel-pause pause-repo
 ```
 
-You don't usually edit these directly — the `/gh-channel-pause` command writes them for you.
+You don't usually edit these directly — the `/claude-gh-channel:gh-channel-pause` command writes them for you.
 
 ## The four skills
 
@@ -146,21 +146,23 @@ Skills use one MCP tool — `channel_reply` — to write back. That tool handles
 
 ## Commands
 
+All commands are **namespaced** under the plugin name — Claude Code prefixes plugin-provided commands with `<plugin-name>:` to avoid collisions. So in your session you actually type `/claude-gh-channel:<name>`, not `/<name>`. Examples below use the namespaced form.
+
 | Command | What it does |
 |---|---|
-| `/gh-channel-setup` | One-time interactive bootstrap. Idempotent — re-run to update tunnel URL or repo. |
-| `/gh-channel-status` | Snapshot: is the tunnel up? webhook active on GitHub? watcher attached? queue depth? |
-| `/gh-channel-enable` | Master ON: tunnel up + webhook `active: true` + runtime flag. |
-| `/gh-channel-disable` | Master OFF: webhook `active: false`. Reversible. Tunnel kept up. |
-| `/gh-channel-pause 2h` | Time-windowed pause. Events queue but don't emit. |
-| `/gh-channel-pause quiet` | Same, no time window — flip back with `unquiet`. |
-| `/gh-channel-pause pause-repo OWNER/NAME` | Skip one repo, keep others. |
-| `/gh-channel-pause resume` | Clear all pause / quiet / disabled-repo state. |
-| `/gh-channel-reload` | Re-read `config.yaml`. Subscriptions, routing hints, and filter expressions update live; brief + port need a watcher restart. |
-| `/gh-channel-queue` | Show pending + recent events from the SQLite queue. |
-| `/gh-channel-replay <delivery_id>` | Re-emit a past event to the watcher. Accepts a prefix if unambiguous. |
-| `/gh-channel-pin pr <url> --hard\|--soft [--as <skill>]` | Focus the watcher on a single PR. Hard = filter everything else; soft = decorate matching events with `pinned: true` + `priority: critical`. Auto-clears when the PR closes. Subcommands: `show`, `clear`. |
-| `/gh-channel-uninstall` | Confirmed teardown: delete GH webhook, stop tunnel, remove launchd plist, archive SQLite DB. Leaves config + secret. |
+| `/claude-gh-channel:gh-channel-setup` | One-time interactive bootstrap. Idempotent — re-run to update tunnel URL or repo. |
+| `/claude-gh-channel:gh-channel-status` | Snapshot: is the tunnel up? webhook active on GitHub? watcher attached? queue depth? |
+| `/claude-gh-channel:gh-channel-enable` | Master ON: tunnel up + webhook `active: true` + runtime flag. |
+| `/claude-gh-channel:gh-channel-disable` | Master OFF: webhook `active: false`. Reversible. Tunnel kept up. |
+| `/claude-gh-channel:gh-channel-pause 2h` | Time-windowed pause. Events queue but don't emit. |
+| `/claude-gh-channel:gh-channel-pause quiet` | Same, no time window — flip back with `unquiet`. |
+| `/claude-gh-channel:gh-channel-pause pause-repo OWNER/NAME` | Skip one repo, keep others. |
+| `/claude-gh-channel:gh-channel-pause resume` | Clear all pause / quiet / disabled-repo state. |
+| `/claude-gh-channel:gh-channel-reload` | Re-read `config.yaml`. Subscriptions, routing hints, and filter expressions update live; brief + port need a watcher restart. |
+| `/claude-gh-channel:gh-channel-queue` | Show pending + recent events from the SQLite queue. |
+| `/claude-gh-channel:gh-channel-replay <delivery_id>` | Re-emit a past event to the watcher. Accepts a prefix if unambiguous. |
+| `/claude-gh-channel:gh-channel-pin pr <url> --hard\|--soft [--as <skill>]` | Focus the watcher on a single PR. Hard = filter everything else; soft = decorate matching events with `pinned: true` + `priority: critical`. Auto-clears when the PR closes. Subcommands: `show`, `clear`. |
+| `/claude-gh-channel:gh-channel-uninstall` | Confirmed teardown: delete GH webhook, stop tunnel, remove launchd plist, archive SQLite DB. Leaves config + secret. |
 
 ## How it actually works
 
@@ -205,32 +207,32 @@ Deep dive (process tree, file locations, sequence diagrams, debugging recipes): 
 ## Troubleshooting
 
 **Q: My PR doesn't show up in the watcher pane.**
-Run `/gh-channel-status`. Most common causes: tunnel URL on GitHub doesn't match the running tunnel (cloudflared restarted and rotated the URL — re-run `/gh-channel-setup`), or no watcher is attached (`claude --channels plugin:claude-gh-channel:gh-channel`).
+Run `/claude-gh-channel:gh-channel-status`. Most common causes: tunnel URL on GitHub doesn't match the running tunnel (cloudflared restarted and rotated the URL — re-run `/claude-gh-channel:gh-channel-setup`), or no watcher is attached (`claude --channels plugin:claude-gh-channel:gh-channel`).
 
-**Q: Events show up in `/gh-channel-queue` but the watcher pane is silent.**
+**Q: Events show up in `/claude-gh-channel:gh-channel-queue` but the watcher pane is silent.**
 Usually means Claude is mid-tool-call or about to compact. Wait a tick or `cmd-shift-c` to compact and check again.
 
 **Q: I rebooted. Nothing's working.**
-The cloudflared LaunchAgent (if installed) auto-starts but gets a new `*.trycloudflare.com` URL. The webhook on GitHub still points at the old one. Re-run `/gh-channel-setup` — it's idempotent and will patch the webhook to the new URL.
+The cloudflared LaunchAgent (if installed) auto-starts but gets a new `*.trycloudflare.com` URL. The webhook on GitHub still points at the old one. Re-run `/claude-gh-channel:gh-channel-setup` — it's idempotent and will patch the webhook to the new URL.
 
-**Q: `/gh-channel-status` says the webhook is returning 401.**
-Secret mismatch. Either run `/gh-channel-setup` again (it'll regenerate + sync), or manually: `gh api -X PATCH repos/<repo>/hooks/<id> -f config[secret]="$(cat ~/.config/claude-gh-channel/secret)"`.
+**Q: `/claude-gh-channel:gh-channel-status` says the webhook is returning 401.**
+Secret mismatch. Either run `/claude-gh-channel:gh-channel-setup` again (it'll regenerate + sync), or manually: `gh api -X PATCH repos/<repo>/hooks/<id> -f config[secret]="$(cat ~/.config/claude-gh-channel/secret)"`.
 
 **Q: I want to watch a second repo.**
-Edit `~/.config/claude-gh-channel/config.yaml`, add another entry under `subscriptions`. Then register a webhook on that repo manually with the same secret + tunnel URL (`gh api -X POST repos/<owner>/<repo>/hooks --input -` with the appropriate JSON — see what setup did the first time, or copy-paste from your shell history). Re-run `/gh-channel-reload`. Multi-repo first-class support is on the roadmap.
+Edit `~/.config/claude-gh-channel/config.yaml`, add another entry under `subscriptions`. Then register a webhook on that repo manually with the same secret + tunnel URL (`gh api -X POST repos/<owner>/<repo>/hooks --input -` with the appropriate JSON — see what setup did the first time, or copy-paste from your shell history). Re-run `/claude-gh-channel:gh-channel-reload`. Multi-repo first-class support is on the roadmap.
 
 **Q: I want it to stop bothering me for an hour.**
-`/gh-channel-pause 1h`. Events still queue. They drain when the window passes.
+`/claude-gh-channel:gh-channel-pause 1h`. Events still queue. They drain when the window passes.
 
 **Q: I want to nuke it.**
-`/gh-channel-uninstall`. It'll ask for confirmation, then delete the GitHub webhook, stop the tunnel, remove the launchd plist, and archive the SQLite database. Your config and secret are left in place — to wipe completely, also `rm -rf ~/.config/claude-gh-channel ~/.local/share/claude-gh-channel`.
+`/claude-gh-channel:gh-channel-uninstall`. It'll ask for confirmation, then delete the GitHub webhook, stop the tunnel, remove the launchd plist, and archive the SQLite database. Your config and secret are left in place — to wipe completely, also `rm -rf ~/.config/claude-gh-channel ~/.local/share/claude-gh-channel`.
 
 ## Known limitations (v1)
 
 | Limitation | What it means in practice |
 |---|---|
 | Server runs inside the Claude session (no separate daemon) | If no watcher is attached when GitHub fires a webhook, the tunnel hop fails and GitHub retries for ~8 hours. Workaround: keep a watcher attached. v2 will split the daemon from the Claude session. |
-| Cloudflared **quick** tunnel URLs rotate | Every cloudflared restart gets a new `*.trycloudflare.com`. After a reboot, run `/gh-channel-setup` to patch the webhook. Named tunnel + DNS support is on the roadmap. |
+| Cloudflared **quick** tunnel URLs rotate | Every cloudflared restart gets a new `*.trycloudflare.com`. After a reboot, run `/claude-gh-channel:gh-channel-setup` to patch the webhook. Named tunnel + DNS support is on the roadmap. |
 | macOS only | Launchd auto-start, cmux integration. Linux/systemd support not in v1. |
 | One Claude watcher per machine | Channels are 1:1 (proven in `spike/0.4-multi-session/EVIDENCE.md`). Multi-watcher fan-out needs the v2 daemon split. |
 | Lightweight config validation | Required fields + version check. Full JSON-schema validation against `config/schema.json` is on the roadmap. |

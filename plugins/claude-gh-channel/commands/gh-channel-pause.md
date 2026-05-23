@@ -4,7 +4,7 @@ description: Temporary, scoped quieting of claude-gh-channel — pause emissions
 
 # /gh-channel-pause
 
-Soft controls that sit between "fully on" and `/gh-channel-disable`. Events keep flowing into the SQLite queue — only the live emit-to-attached-Claude path is gated. When the pause/quiet/mute lifts, queued events are still there for replay.
+Soft controls that sit between "fully on" and `/claude-gh-channel:gh-channel-disable`. Events keep flowing into the SQLite queue — only the live emit-to-attached-Claude path is gated. When the pause/quiet/mute lifts, queued events are still there for replay.
 
 This command takes a **subcommand argument**. Parse `$ARGUMENTS` and route:
 

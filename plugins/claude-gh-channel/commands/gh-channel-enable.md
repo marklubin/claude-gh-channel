@@ -43,7 +43,7 @@ else
 fi
 ```
 
-Poll the log for the public URL (up to 15s). If it rotated (differs from the value in `~/.config/claude-gh-channel/tunnel-url`), update the file AND warn the user — the GH webhook URL still points at the old one and will need `/gh-channel-reload` + a webhook URL patch:
+Poll the log for the public URL (up to 15s). If it rotated (differs from the value in `~/.config/claude-gh-channel/tunnel-url`), update the file AND warn the user — the GH webhook URL still points at the old one and will need `/claude-gh-channel:gh-channel-reload` + a webhook URL patch:
 
 ```bash
 for i in $(seq 1 15); do

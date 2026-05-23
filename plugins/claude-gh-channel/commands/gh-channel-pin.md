@@ -9,9 +9,9 @@ Narrow the watcher's attention to one PR. Useful when you're heads-down on somet
 ## Syntax
 
 ```
-/gh-channel-pin pr <pr-url> --hard|--soft [--as <skill-name>]
-/gh-channel-pin show
-/gh-channel-pin clear
+/claude-gh-channel:gh-channel-pin pr <pr-url> --hard|--soft [--as <skill-name>]
+/claude-gh-channel:gh-channel-pin show
+/claude-gh-channel:gh-channel-pin clear
 ```
 
 - **--hard**: server filters out (drops, doesn't emit) every webhook that isn't on the pinned PR. Even other PRs in the same subscribed repo are silenced.
@@ -89,20 +89,20 @@ Remove the pin. Tell the user what was cleared (the response includes the previo
 
 - It does not modify `config.yaml`. The pin is operational state, not declarative config.
 - It does not survive a watcher restart. If you restart the watcher, you'll need to re-pin. This is intentional — pins should reflect *current* active focus, and a restart usually means context has shifted.
-- It does not gate the GitHub-side webhook. Webhooks still fire on every event; pin gates at the server's filter stage. To gate at GH, use `/gh-channel-pause pause-repo <r>` (which is repo-scoped, not PR-scoped).
+- It does not gate the GitHub-side webhook. Webhooks still fire on every event; pin gates at the server's filter stage. To gate at GH, use `/claude-gh-channel:gh-channel-pause pause-repo <r>` (which is repo-scoped, not PR-scoped).
 
 ## Examples
 
 ```
-/gh-channel-pin pr https://github.com/kinelo/kinelo/pull/345 --hard
+/claude-gh-channel:gh-channel-pin pr https://github.com/kinelo/kinelo/pull/345 --hard
 # Drops everything except PR #345 events. Other PRs in kinelo/kinelo also filtered.
 
-/gh-channel-pin pr https://github.com/kinelo/kinelo/pull/345 --soft --as pr-review-prep
+/claude-gh-channel:gh-channel-pin pr https://github.com/kinelo/kinelo/pull/345 --soft --as pr-review-prep
 # All events still flow. Events on PR #345 arrive with priority=critical and suggested_skill=pr-review-prep.
 
-/gh-channel-pin show
+/claude-gh-channel:gh-channel-pin show
 # {"pin":{"repo":"kinelo/kinelo","number":345,"mode":"soft","as_skill":"pr-review-prep","set_at":"..."}}
 
-/gh-channel-pin clear
+/claude-gh-channel:gh-channel-pin clear
 # Removes the pin. Watcher resumes seeing everything per subscriptions.
 ```

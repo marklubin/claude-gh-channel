@@ -11,7 +11,7 @@ Manually re-trigger an event that's already in the SQLite queue. Use this when:
 
 ## Step 1 — Parse argument
 
-Single positional arg: the delivery id (full UUID or 8-char prefix as shown by `/gh-channel-queue`).
+Single positional arg: the delivery id (full UUID or 8-char prefix as shown by `/claude-gh-channel:gh-channel-queue`).
 
 ```bash
 DID="${ARGUMENTS%% *}"
@@ -38,7 +38,7 @@ COUNT=$(echo "$MATCHES" | grep -c . || true)
 
 Handle the three cases:
 
-- `COUNT = 0` → "No event matches `$DID`. Run `/gh-channel-queue` to see available delivery ids." Exit.
+- `COUNT = 0` → "No event matches `$DID`. Run `/claude-gh-channel:gh-channel-queue` to see available delivery ids." Exit.
 - `COUNT = 1` → continue to Step 3.
 - `COUNT > 1` → print all matches in a small table and ask the user to disambiguate by providing more of the id. Exit without replaying.
 
@@ -84,9 +84,9 @@ Expected response shape (per design doc M3):
 ```
 
 If the server returns non-2xx:
-- `404` on `/replay` → server is an older v1 build without replay support; tell the user to `/gh-channel-reload` after pulling latest.
+- `404` on `/replay` → server is an older v1 build without replay support; tell the user to `/claude-gh-channel:gh-channel-reload` after pulling latest.
 - `409 already_in_flight` → another replay of the same id is currently delivering; safe to ignore, do not retry.
-- `5xx` → surface the body; suggest `/gh-channel-status` to see if the server is wedged.
+- `5xx` → surface the body; suggest `/claude-gh-channel:gh-channel-status` to see if the server is wedged.
 
 ## Step 5 — Report
 
@@ -95,6 +95,6 @@ One short paragraph:
 - Event summary (type/action/repo).
 - Whether the replay succeeded.
 - If the row had `emitted=0` previously, note that the queue now marks it `emitted=1` — subsequent natural drains won't re-fire it.
-- If you want it fired again, just re-run `/gh-channel-replay <id>` — the endpoint is explicitly idempotent-friendly (re-emit is the whole point).
+- If you want it fired again, just re-run `/claude-gh-channel:gh-channel-replay <id>` — the endpoint is explicitly idempotent-friendly (re-emit is the whole point).
 
 Do not modify the SQLite row directly. The server owns writes to `events.db`; clobbering `emitted` from outside risks a torn write against the WAL.
