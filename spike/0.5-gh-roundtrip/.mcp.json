@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "gh-roundtrip": {
+      "command": "bun",
+      "args": ["./server.ts"]
+    }
+  }
+}
