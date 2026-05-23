@@ -1,0 +1,84 @@
+# claude-gh-channel — example configuration
+#
+# Copy to ~/.config/claude-gh-channel/config.yaml and edit.
+# Run /gh-channel-setup to generate the basics interactively.
+#
+# Templating:
+#   ${env:VAR}           — environment variable
+#   ${user.foo}          — refers to user.foo elsewhere in this file
+#   ${vars.foo}          — refers to vars.foo (user-defined)
+#   ${brief_vars.foo}    — used only inside agent_brief
+
+version: 1
+
+user:
+  github_username: ${env:GITHUB_USERNAME}
+  display_name: Mark
+  tunnel_url: ${env:CHANNEL_TUNNEL_URL}   # cloudflared URL; setup writes it for you
+
+vars:
+  todo_path: ~/command-center/todo.md
+  journal_dir: ~/command-center/journal
+  notification_style: terse
+
+sidecar:
+  cmux_status_target: gh-channel
+  todo_file: ${vars.todo_path}
+  drafts_dir: ~/.config/claude-gh-channel/drafts
+
+# (1) DETERMINISTIC FILTERING — server enforces, events never reach the channel
+subscriptions:
+  - repo: marklubin/claude-gh-channel
+    events: [pull_request, pull_request_review, issue_comment, pull_request_review_comment]
+    filters:
+      ignore_authors: ["dependabot[bot]", "renovate[bot]"]
+      ignore_if: 'payload.pull_request != null && payload.pull_request.draft === true'
+
+# (2) STEERING — baked into channel `instructions` for the watcher session
+# Either inline `agent_brief: "..."` or point to a file:
+agent_brief_file: ${CLAUDE_PLUGIN_ROOT}/config/default-brief.md
+brief_vars:
+  active_workstreams:
+    - workstream-primitive
+    - mock-infra
+    - event-mesh
+
+# (3) ROUTING HINTS — server attaches `suggested_skill` + `priority` to the
+# event meta when these match. Advisory; the watcher Claude makes the final call.
+routing_hints:
+  - on: pull_request.opened
+    when: 'payload.pull_request.user.login === user.github_username'
+    meta:
+      suggested_skill: pr-triage
+      priority: normal
+
+  - on: pull_request.review_requested
+    when: 'payload.requested_reviewer != null && payload.requested_reviewer.login === user.github_username'
+    meta:
+      suggested_skill: pr-review-prep
+      priority: high
+
+  - on: issue_comment.created
+    when: 'payload.issue.pull_request != null && payload.comment.user.login !== user.github_username && payload.issue.user.login === user.github_username'
+    meta:
+      suggested_skill: pr-comment-respond
+      priority: normal
+
+  - on: pull_request.closed
+    when: 'payload.pull_request.merged === true && payload.pull_request.user.login === user.github_username'
+    meta:
+      suggested_skill: pr-merge-followup
+      priority: low
+
+runtime:
+  enabled: false              # master switch — daemon refuses to start when false
+  http_port: 8788
+  sqlite_path: ~/.local/share/claude-gh-channel/events.db
+  log_path: ~/.local/share/claude-gh-channel/server.log
+  background_session:
+    enabled: false
+    auto_start: true
+    restart_on_crash: true
+  quiet_mode: false
+  pause_until: null
+  disabled_repos: []

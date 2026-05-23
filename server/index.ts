@@ -1,15 +1,13 @@
 /**
  * claude-gh-channel — plugin server.
  *
- * Promoted from spike/0.5-gh-roundtrip/server.ts after that spike proved
- * real GH → cloudflared → HMAC verify → notifications/claude/channel
- * round-trip end-to-end. See spike/0.5-gh-roundtrip/EVIDENCE.md for the
- * proof transcript.
+ * Config-driven via ~/.config/claude-gh-channel/config.yaml (see config/example.yaml).
+ * Real-GH E2E proven by spike/0.5-gh-roundtrip/EVIDENCE.md before M2 rewire.
  *
  * Architecture:
- *   GitHub.com ──HTTPS POST──► tunnel ──► localhost:8788/webhook
+ *   GitHub.com ──HTTPS POST──► tunnel ──► localhost:<http_port>/webhook
  *                                              │
- *                                  verify HMAC + summarize
+ *                              verify HMAC + subscription-filter + summarize + routing-hints
  *                                              │
  *                               notifications/claude/channel
  *                                              │
@@ -18,12 +16,6 @@
  * Secret resolution (first hit wins):
  *   1. process.env.GH_WEBHOOK_SECRET
  *   2. ~/.config/claude-gh-channel/secret
- *
- * Run via plugin:
- *   The plugin's .mcp.json registers this as the `gh-channel` MCP server.
- *   When a Claude session loads with `--channels plugin:claude-gh-channel:gh-channel`
- *   (or via /gh-channel-setup), Claude spawns `bun ${CLAUDE_PLUGIN_ROOT}/server/index.ts`
- *   over stdio.
  *
  * IMPORTANT: do NOT log to stdout — that's the MCP transport. Use stderr.
  */
@@ -34,7 +26,9 @@ import { readFileSync, existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-const HTTP_PORT = Number(process.env.GH_CHANNEL_HTTP_PORT ?? 8788);
+import { loadConfig, type Config } from "./config";
+import { matchSubscription, applyRoutingHints } from "./filters";
+
 const CONFIG_DIR = join(homedir(), ".config", "claude-gh-channel");
 const SECRET_FILE = join(CONFIG_DIR, "secret");
 
@@ -42,40 +36,38 @@ const log = (...args: unknown[]) => console.error("[gh-channel]", ...args);
 
 function resolveSecret(): string {
   if (process.env.GH_WEBHOOK_SECRET) return process.env.GH_WEBHOOK_SECRET;
-  if (existsSync(SECRET_FILE)) {
-    return readFileSync(SECRET_FILE, "utf8").trim();
-  }
+  if (existsSync(SECRET_FILE)) return readFileSync(SECRET_FILE, "utf8").trim();
   log(
-    `FATAL: no secret found. Set GH_WEBHOOK_SECRET env or write one to ${SECRET_FILE}. ` +
-      `Run /gh-channel-setup from a Claude session inside this plugin to bootstrap.`,
+    `FATAL: no secret found. Set GH_WEBHOOK_SECRET or write one to ${SECRET_FILE}. ` +
+      `Run /gh-channel-setup to bootstrap.`,
   );
   process.exit(1);
 }
 
 const WEBHOOK_SECRET = resolveSecret();
 
+let config: Config;
+try {
+  config = loadConfig();
+} catch (err) {
+  log(`FATAL config load: ${err instanceof Error ? err.message : String(err)}`);
+  process.exit(1);
+}
+
+const HTTP_PORT = Number(process.env.GH_CHANNEL_HTTP_PORT ?? config.runtime.http_port);
+
 const server = new Server(
-  {
-    name: "claude-gh-channel",
-    version: "0.1.0",
-  },
+  { name: "claude-gh-channel", version: "0.1.0" },
   {
     capabilities: {
       experimental: { "claude/channel": {} },
     },
-    instructions:
-      "Background watcher for GitHub PR/issue/review events. Events arrive tagged " +
-      "with event_type ∈ {pull_request, issue_comment, pull_request_review, " +
-      "pull_request_review_comment}. Each event includes meta: delivery_id, repo, " +
-      "action, sender, number, author, html_url, title, plus event-specific fields. " +
-      "When you receive one, decide whether to invoke a skill (e.g. pr-review-prep " +
-      "when Mark is review-requested) or just acknowledge and wait. Never push, " +
-      "merge, approve, or post on GitHub on behalf of the user without confirmation.",
+    instructions: config.agent_brief,
   },
 );
 
 server.oninitialized = () => {
-  log("client initialized; webhook channel ready");
+  log(`client initialized; ${config.subscriptions.length} subscription(s), ${config.routing_hints.length} routing hint(s)`);
 };
 
 const transport = new StdioServerTransport();
@@ -109,6 +101,23 @@ async function verifySignature(body: string, header: string | null): Promise<boo
     diff |= expected.charCodeAt(i) ^ provided.charCodeAt(i);
   }
   return diff === 0;
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Pause / quiet / disabled-repo gates
+// ────────────────────────────────────────────────────────────────────────────
+
+function isQuiet(now: number = Date.now()): boolean {
+  if (config.runtime.quiet_mode) return true;
+  if (config.runtime.pause_until) {
+    const until = Date.parse(config.runtime.pause_until);
+    if (!Number.isNaN(until) && now < until) return true;
+  }
+  return false;
+}
+
+function isRepoDisabled(repo: string): boolean {
+  return config.runtime.disabled_repos.includes(repo);
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -152,7 +161,7 @@ function summarize(
   if (eventType === "issue_comment") {
     const issue = payload.issue;
     const comment = payload.comment;
-    if (!issue?.pull_request) return null; // skip non-PR issue comments
+    if (!issue?.pull_request) return null;
     const snippet = (comment.body ?? "").slice(0, 140).replace(/\s+/g, " ");
     return {
       content: `[PR comment ${action}] ${repo}#${issue.number} by ${comment.user.login}: ${snippet} — ${comment.html_url}`,
@@ -230,12 +239,15 @@ type DeliveryLog = {
   sender: string;
   received_at: string;
   emitted: boolean;
+  filtered_reason?: string;
   emit_error?: string;
 };
 const deliveries: DeliveryLog[] = [];
 let totalReceived = 0;
 let totalEmitted = 0;
 let totalRejected = 0;
+let totalFiltered = 0;
+let totalQueued = 0;
 
 const httpServer = Bun.serve({
   port: HTTP_PORT,
@@ -250,14 +262,16 @@ const httpServer = Bun.serve({
         received: totalReceived,
         emitted: totalEmitted,
         rejected: totalRejected,
+        filtered: totalFiltered,
+        queued: totalQueued,
+        quiet: isQuiet(),
+        paused_until: config.runtime.pause_until,
+        subscriptions: config.subscriptions.length,
       });
     }
 
     if (req.method === "GET" && url.pathname === "/deliveries") {
-      return Response.json({
-        count: deliveries.length,
-        deliveries: deliveries.slice(-50),
-      });
+      return Response.json({ count: deliveries.length, deliveries: deliveries.slice(-50) });
     }
 
     if (req.method === "POST" && url.pathname === "/webhook") {
@@ -291,21 +305,61 @@ const httpServer = Bun.serve({
         return Response.json({ ok: true, pong: true });
       }
 
-      const summary = summarize(eventType, deliveryId, payload);
+      const repo = payload.repository?.full_name ?? "?";
       const logEntry: DeliveryLog = {
         delivery_id: deliveryId,
         event_type: eventType,
         action: payload.action ?? "",
-        repo: payload.repository?.full_name ?? "",
+        repo,
         sender: payload.sender?.login ?? "",
         received_at: new Date().toISOString(),
         emitted: false,
       };
       deliveries.push(logEntry);
 
+      // Gate: disabled repo
+      if (isRepoDisabled(repo)) {
+        totalFiltered += 1;
+        logEntry.filtered_reason = "repo_disabled";
+        log(`filter: delivery_id=${deliveryId} repo=${repo} is in disabled_repos`);
+        return Response.json({ ok: true, emitted: false, reason: "repo_disabled" });
+      }
+
+      // Filter: subscription + author + ignore_if
+      const sub = matchSubscription(config, repo, eventType, payload);
+      if (!sub) {
+        totalFiltered += 1;
+        logEntry.filtered_reason = "no_subscription_match";
+        log(`filter: delivery_id=${deliveryId} no matching subscription (or filtered by author/ignore_if)`);
+        return Response.json({ ok: true, emitted: false, reason: "no_subscription_match" });
+      }
+
+      const summary = summarize(eventType, deliveryId, payload);
       if (!summary) {
-        log(`no summary for event=${eventType} action=${payload.action ?? "?"} — skipping emit`);
-        return Response.json({ ok: true, emitted: false, reason: "no summary" });
+        totalFiltered += 1;
+        logEntry.filtered_reason = "no_summary";
+        log(`filter: delivery_id=${deliveryId} no summary for event=${eventType} action=${payload.action}`);
+        return Response.json({ ok: true, emitted: false, reason: "no_summary" });
+      }
+
+      // Routing hints → merge into meta
+      const hintMeta = applyRoutingHints(
+        config.routing_hints,
+        config.user,
+        config.vars,
+        eventType,
+        payload.action ?? null,
+        payload,
+      );
+      Object.assign(summary.meta, hintMeta);
+
+      // Gate: quiet / paused → queue rather than emit. (Queue lands in M3;
+      // for now we just count + log.)
+      if (isQuiet()) {
+        totalQueued += 1;
+        logEntry.filtered_reason = "queued_quiet_or_paused";
+        log(`queued (quiet/paused): delivery_id=${deliveryId}`);
+        return Response.json({ ok: true, emitted: false, queued: true });
       }
 
       try {
@@ -315,7 +369,7 @@ const httpServer = Bun.serve({
         } as any);
         totalEmitted += 1;
         logEntry.emitted = true;
-        log(`emitted notification for delivery_id=${deliveryId}`);
+        log(`emitted notification for delivery_id=${deliveryId}${hintMeta.suggested_skill ? ` skill=${hintMeta.suggested_skill}` : ""}`);
         return Response.json({ ok: true, emitted: true });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -330,6 +384,7 @@ const httpServer = Bun.serve({
 });
 
 log(`HTTP listener up on http://localhost:${httpServer.port}`);
+log(`  config=${process.env.GH_CHANNEL_CONFIG ?? join(homedir(), ".config", "claude-gh-channel", "config.yaml")}`);
 log(`  POST /webhook  — GitHub webhook receiver (HMAC verified)`);
-log(`  GET  /health   — counters`);
+log(`  GET  /health   — counters + state`);
 log(`  GET  /deliveries — last 50 deliveries`);

@@ -1,0 +1,110 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema",
+  "$id": "https://github.com/marklubin/claude-gh-channel/config/schema.json",
+  "title": "claude-gh-channel config",
+  "type": "object",
+  "required": ["version", "user", "subscriptions"],
+  "properties": {
+    "version": { "const": 1 },
+
+    "user": {
+      "type": "object",
+      "required": ["github_username"],
+      "properties": {
+        "github_username": { "type": "string" },
+        "display_name": { "type": "string" },
+        "tunnel_url": { "type": "string", "format": "uri" }
+      }
+    },
+
+    "vars": {
+      "type": "object",
+      "description": "User-defined values usable in ${vars.*} interpolation in agent_brief / hints.",
+      "additionalProperties": true
+    },
+
+    "sidecar": {
+      "type": "object",
+      "properties": {
+        "cmux_status_target": { "type": "string" },
+        "todo_file": { "type": "string" },
+        "drafts_dir": { "type": "string" }
+      }
+    },
+
+    "subscriptions": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["repo", "events"],
+        "properties": {
+          "repo": { "type": "string", "pattern": "^[^/]+/[^/]+$" },
+          "events": {
+            "type": "array",
+            "items": {
+              "enum": [
+                "pull_request",
+                "issue_comment",
+                "pull_request_review",
+                "pull_request_review_comment"
+              ]
+            },
+            "minItems": 1
+          },
+          "filters": {
+            "type": "object",
+            "properties": {
+              "ignore_authors": { "type": "array", "items": { "type": "string" } },
+              "ignore_if": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+
+    "agent_brief": { "type": "string" },
+    "agent_brief_file": { "type": "string" },
+    "brief_vars": { "type": "object", "additionalProperties": true },
+
+    "routing_hints": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["on", "meta"],
+        "properties": {
+          "on": {
+            "type": "string",
+            "description": "event_type[.action] e.g. 'pull_request.opened'"
+          },
+          "when": { "type": "string", "description": "boolean expression over payload/user" },
+          "meta": {
+            "type": "object",
+            "additionalProperties": { "type": "string" }
+          }
+        }
+      }
+    },
+
+    "runtime": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean", "default": false },
+        "http_port": { "type": "integer", "default": 8788 },
+        "sqlite_path": { "type": "string" },
+        "log_path": { "type": "string" },
+        "background_session": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean", "default": false },
+            "auto_start": { "type": "boolean", "default": true },
+            "restart_on_crash": { "type": "boolean", "default": true }
+          }
+        },
+        "quiet_mode": { "type": "boolean", "default": false },
+        "pause_until": { "type": ["string", "null"], "format": "date-time" },
+        "disabled_repos": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  }
+}
