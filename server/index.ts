@@ -60,6 +60,11 @@ try {
   process.exit(1);
 }
 
+// Hot-reloadable view: code reads from this, /reload swaps it. The frozen
+// initial `config` is kept for fields that can't be hot-changed
+// (agent_brief baked into MCP instructions, http_port bound on listener).
+let live = config;
+
 const HTTP_PORT = Number(process.env.GH_CHANNEL_HTTP_PORT ?? config.runtime.http_port);
 
 const queue = new EventQueue(config.runtime.sqlite_path);
@@ -90,7 +95,7 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
 
 server.oninitialized = async () => {
   log(
-    `client initialized; ${config.subscriptions.length} subscription(s), ${config.routing_hints.length} routing hint(s)`,
+    `client initialized; ${live.subscriptions.length} subscription(s), ${live.routing_hints.length} routing hint(s)`,
   );
   // Drain anything queued from a prior session (or that was queued during quiet/pause)
   if (!isQuiet()) {
@@ -154,16 +159,16 @@ async function verifySignature(body: string, header: string | null): Promise<boo
 // ────────────────────────────────────────────────────────────────────────────
 
 function isQuiet(now: number = Date.now()): boolean {
-  if (config.runtime.quiet_mode) return true;
-  if (config.runtime.pause_until) {
-    const until = Date.parse(config.runtime.pause_until);
+  if (live.runtime.quiet_mode) return true;
+  if (live.runtime.pause_until) {
+    const until = Date.parse(live.runtime.pause_until);
     if (!Number.isNaN(until) && now < until) return true;
   }
   return false;
 }
 
 function isRepoDisabled(repo: string): boolean {
-  return config.runtime.disabled_repos.includes(repo);
+  return live.runtime.disabled_repos.includes(repo);
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -312,8 +317,8 @@ const httpServer = Bun.serve({
         filtered: totalFiltered,
         queued_in_session: totalQueued,
         quiet: isQuiet(),
-        paused_until: config.runtime.pause_until,
-        subscriptions: config.subscriptions.length,
+        paused_until: live.runtime.pause_until,
+        subscriptions: live.subscriptions.length,
         queue: qstats,
       });
     }
@@ -334,6 +339,29 @@ const httpServer = Bun.serve({
           meta: JSON.parse(meta_json),
         })),
       });
+    }
+
+    if (req.method === "POST" && url.pathname === "/reload") {
+      try {
+        const fresh = loadConfig(true);
+        // Hot-reload via reference swap. Anything that captured `live`
+        // at module-init time (subscription filter, routing hints,
+        // quiet/pause gates) picks up the new value on next call.
+        // The agent_brief baked into MCP `instructions` and the HTTP
+        // port bound on Bun.serve are NOT hot-swappable — restart for those.
+        live = fresh;
+        log(`reloaded config from disk; subs=${fresh.subscriptions.length} hints=${fresh.routing_hints.length}`);
+        return Response.json({
+          ok: true,
+          subscriptions: fresh.subscriptions.length,
+          routing_hints: fresh.routing_hints.length,
+          note: "agent_brief + http_port changes require server restart",
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        log(`reload failed: ${msg}`);
+        return Response.json({ ok: false, error: msg }, { status: 500 });
+      }
     }
 
     if (req.method === "POST" && url.pathname === "/replay") {
@@ -411,7 +439,7 @@ const httpServer = Bun.serve({
       }
 
       // Filter: subscription + author + ignore_if
-      const sub = matchSubscription(config, repo, eventType, payload);
+      const sub = matchSubscription(live, repo, eventType, payload);
       if (!sub) {
         totalFiltered += 1;
         logEntry.filtered_reason = "no_subscription_match";
@@ -429,9 +457,9 @@ const httpServer = Bun.serve({
 
       // Routing hints → merge into meta
       const hintMeta = applyRoutingHints(
-        config.routing_hints,
-        config.user,
-        config.vars,
+        live.routing_hints,
+        live.user,
+        live.vars,
         eventType,
         payload.action ?? null,
         payload,
