@@ -1,0 +1,21 @@
+{
+  "name": "marklubin",
+  "owner": {
+    "name": "Mark Lubin",
+    "email": "mark@kinelo.com"
+  },
+  "metadata": {
+    "description": "Personal Claude Code plugins by Mark Lubin",
+    "version": "0.1.0"
+  },
+  "plugins": [
+    {
+      "name": "claude-gh-channel",
+      "source": ".",
+      "description": "GitHub PR events surfaced live into a persistent Claude Code session via the experimental MCP channels API. Drafts replies, flags risky diffs, tracks merged-PR follow-ups. macOS, single watcher, personal use.",
+      "version": "0.1.0",
+      "category": "integration",
+      "tags": ["github", "channels", "pr-review", "webhook", "mcp"]
+    }
+  ]
+}
