@@ -22,12 +22,18 @@
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import {
+  CallToolRequestSchema,
+  ListToolsRequestSchema,
+} from "@modelcontextprotocol/sdk/types.js";
 import { readFileSync, existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
 import { loadConfig, type Config } from "./config";
 import { matchSubscription, applyRoutingHints } from "./filters";
+import { EventQueue } from "./queue";
+import { REPLY_TOOL, makeHandler } from "./reply";
 
 const CONFIG_DIR = join(homedir(), ".config", "claude-gh-channel");
 const SECRET_FILE = join(CONFIG_DIR, "secret");
@@ -56,18 +62,58 @@ try {
 
 const HTTP_PORT = Number(process.env.GH_CHANNEL_HTTP_PORT ?? config.runtime.http_port);
 
+const queue = new EventQueue(config.runtime.sqlite_path);
+
 const server = new Server(
   { name: "claude-gh-channel", version: "0.1.0" },
   {
     capabilities: {
       experimental: { "claude/channel": {} },
+      tools: {},
     },
     instructions: config.agent_brief,
   },
 );
 
-server.oninitialized = () => {
-  log(`client initialized; ${config.subscriptions.length} subscription(s), ${config.routing_hints.length} routing hint(s)`);
+const replyHandler = makeHandler(config);
+
+server.setRequestHandler(ListToolsRequestSchema, async () => ({
+  tools: [REPLY_TOOL],
+}));
+
+server.setRequestHandler(CallToolRequestSchema, async (req) => {
+  if (req.params.name !== "channel_reply") {
+    throw new Error(`unknown tool: ${req.params.name}`);
+  }
+  return await replyHandler(req.params.arguments as any);
+});
+
+server.oninitialized = async () => {
+  log(
+    `client initialized; ${config.subscriptions.length} subscription(s), ${config.routing_hints.length} routing hint(s)`,
+  );
+  // Drain anything queued from a prior session (or that was queued during quiet/pause)
+  if (!isQuiet()) {
+    const pending = queue.pending();
+    if (pending.length > 0) {
+      log(`draining ${pending.length} queued event(s) on attach`);
+      for (const ev of pending) {
+        try {
+          const meta = JSON.parse(ev.meta_json) as Record<string, string>;
+          // Mark replayed events so Claude knows these are catch-up, not live
+          meta["replayed_at"] = new Date().toISOString();
+          await server.notification({
+            method: "notifications/claude/channel",
+            params: { content: ev.content, meta },
+          } as any);
+          queue.markEmitted(ev.delivery_id);
+        } catch (err) {
+          log(`drain failed for ${ev.delivery_id}:`, err);
+        }
+      }
+      log(`drain complete`);
+    }
+  }
 };
 
 const transport = new StdioServerTransport();
@@ -256,6 +302,7 @@ const httpServer = Bun.serve({
     const url = new URL(req.url);
 
     if (req.method === "GET" && url.pathname === "/health") {
+      const qstats = queue.stats();
       return Response.json({
         ok: true,
         port: HTTP_PORT,
@@ -263,15 +310,53 @@ const httpServer = Bun.serve({
         emitted: totalEmitted,
         rejected: totalRejected,
         filtered: totalFiltered,
-        queued: totalQueued,
+        queued_in_session: totalQueued,
         quiet: isQuiet(),
         paused_until: config.runtime.pause_until,
         subscriptions: config.subscriptions.length,
+        queue: qstats,
       });
     }
 
     if (req.method === "GET" && url.pathname === "/deliveries") {
       return Response.json({ count: deliveries.length, deliveries: deliveries.slice(-50) });
+    }
+
+    if (req.method === "GET" && url.pathname === "/queue") {
+      return Response.json({
+        stats: queue.stats(),
+        pending: queue.pending(50).map(({ meta_json, ...row }) => ({
+          ...row,
+          meta: JSON.parse(meta_json),
+        })),
+        recent: queue.recent(20).map(({ meta_json, ...row }) => ({
+          ...row,
+          meta: JSON.parse(meta_json),
+        })),
+      });
+    }
+
+    if (req.method === "POST" && url.pathname === "/replay") {
+      const body = (await req.json().catch(() => ({}))) as { delivery_id?: string };
+      if (!body.delivery_id) {
+        return new Response("delivery_id required", { status: 400 });
+      }
+      const ev = queue.get(body.delivery_id);
+      if (!ev) return new Response("not found", { status: 404 });
+      try {
+        const meta = JSON.parse(ev.meta_json) as Record<string, string>;
+        meta["replayed_at"] = new Date().toISOString();
+        meta["replay_reason"] = "manual";
+        await server.notification({
+          method: "notifications/claude/channel",
+          params: { content: ev.content, meta },
+        } as any);
+        queue.markEmitted(ev.delivery_id);
+        log(`replayed delivery_id=${ev.delivery_id}`);
+        return Response.json({ ok: true, replayed: ev.delivery_id });
+      } catch (err) {
+        return Response.json({ ok: false, error: String(err) }, { status: 500 });
+      }
     }
 
     if (req.method === "POST" && url.pathname === "/webhook") {
@@ -353,8 +438,22 @@ const httpServer = Bun.serve({
       );
       Object.assign(summary.meta, hintMeta);
 
-      // Gate: quiet / paused → queue rather than emit. (Queue lands in M3;
-      // for now we just count + log.)
+      // Persist to queue (idempotent by delivery_id; GH dedup)
+      const newlyQueued = queue.enqueue({
+        delivery_id: deliveryId,
+        event_type: eventType,
+        action: payload.action ?? "",
+        repo,
+        sender: payload.sender?.login ?? "",
+        content: summary.content,
+        meta: summary.meta,
+      });
+      if (!newlyQueued) {
+        log(`duplicate delivery_id=${deliveryId} — already in queue, acknowledging`);
+        return Response.json({ ok: true, emitted: false, reason: "duplicate" });
+      }
+
+      // Gate: quiet / paused → keep in queue, don't emit
       if (isQuiet()) {
         totalQueued += 1;
         logEntry.filtered_reason = "queued_quiet_or_paused";
@@ -367,15 +466,19 @@ const httpServer = Bun.serve({
           method: "notifications/claude/channel",
           params: { content: summary.content, meta: summary.meta },
         } as any);
+        queue.markEmitted(deliveryId);
         totalEmitted += 1;
         logEntry.emitted = true;
-        log(`emitted notification for delivery_id=${deliveryId}${hintMeta.suggested_skill ? ` skill=${hintMeta.suggested_skill}` : ""}`);
+        log(
+          `emitted notification for delivery_id=${deliveryId}${hintMeta.suggested_skill ? ` skill=${hintMeta.suggested_skill}` : ""}`,
+        );
         return Response.json({ ok: true, emitted: true });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         logEntry.emit_error = msg;
         log(`emit failed for delivery_id=${deliveryId}:`, msg);
-        return Response.json({ ok: false, error: msg }, { status: 500 });
+        // Event stays in queue with emitted=0; next attach drains it.
+        return Response.json({ ok: false, error: msg, queued: true }, { status: 500 });
       }
     }
 
