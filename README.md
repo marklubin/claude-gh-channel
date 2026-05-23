@@ -159,6 +159,7 @@ Skills use one MCP tool — `channel_reply` — to write back. That tool handles
 | `/gh-channel-reload` | Re-read `config.yaml`. Subscriptions, routing hints, and filter expressions update live; brief + port need a watcher restart. |
 | `/gh-channel-queue` | Show pending + recent events from the SQLite queue. |
 | `/gh-channel-replay <delivery_id>` | Re-emit a past event to the watcher. Accepts a prefix if unambiguous. |
+| `/gh-channel-pin pr <url> --hard\|--soft [--as <skill>]` | Focus the watcher on a single PR. Hard = filter everything else; soft = decorate matching events with `pinned: true` + `priority: critical`. Auto-clears when the PR closes. Subcommands: `show`, `clear`. |
 | `/gh-channel-uninstall` | Confirmed teardown: delete GH webhook, stop tunnel, remove launchd plist, archive SQLite DB. Leaves config + secret. |
 
 ## How it actually works

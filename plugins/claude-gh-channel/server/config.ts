@@ -136,7 +136,14 @@ export function loadConfig(force = false): Config {
     throw new Error("config: at least one subscription is required");
   }
 
-  const pluginRoot = process.env.CLAUDE_PLUGIN_ROOT ?? join(homedir(), "claude-gh-channel");
+  // CLAUDE_PLUGIN_ROOT is set by Claude Code when the plugin is loaded normally.
+  // For standalone runs (e.g. smoke tests, manual bun server/index.ts), derive
+  // it from this file's location: server/config.ts lives at <plugin-root>/server/config.ts.
+  const pluginRoot =
+    process.env.CLAUDE_PLUGIN_ROOT ??
+    (typeof import.meta !== "undefined" && (import.meta as any).dir
+      ? join((import.meta as any).dir, "..")
+      : join(homedir(), "claude-gh-channel"));
 
   const templateCtx = {
     env: process.env,

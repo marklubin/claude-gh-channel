@@ -300,6 +300,35 @@ let totalRejected = 0;
 let totalFiltered = 0;
 let totalQueued = 0;
 
+// ────────────────────────────────────────────────────────────────────────────
+// Pin — focus the watcher on a single PR
+// ────────────────────────────────────────────────────────────────────────────
+
+type Pin = {
+  repo: string;
+  number: number;
+  mode: "hard" | "soft";
+  as_skill: string | null;
+  set_at: string;
+};
+
+let pin: Pin | null = null;
+
+function extractPrNumber(eventType: string, payload: any): number | null {
+  if (eventType === "pull_request") return payload.pull_request?.number ?? null;
+  if (eventType === "issue_comment") return payload.issue?.number ?? null;
+  if (eventType === "pull_request_review") return payload.pull_request?.number ?? null;
+  if (eventType === "pull_request_review_comment") return payload.pull_request?.number ?? null;
+  return null;
+}
+
+function pinMatches(repo: string, eventType: string, payload: any): boolean {
+  if (!pin) return false;
+  if (pin.repo !== repo) return false;
+  const n = extractPrNumber(eventType, payload);
+  return n != null && n === pin.number;
+}
+
 const httpServer = Bun.serve({
   port: HTTP_PORT,
   hostname: "127.0.0.1",
@@ -319,8 +348,57 @@ const httpServer = Bun.serve({
         quiet: isQuiet(),
         paused_until: live.runtime.pause_until,
         subscriptions: live.subscriptions.length,
+        pin,
         queue: qstats,
       });
+    }
+
+    // ── Pin endpoints ───────────────────────────────────────────────────────
+
+    if (req.method === "GET" && url.pathname === "/pin") {
+      return Response.json({ pin });
+    }
+
+    if (req.method === "POST" && url.pathname === "/pin") {
+      try {
+        const body = (await req.json()) as Partial<Pin>;
+        if (!body.repo || !body.number || !body.mode) {
+          return Response.json(
+            { ok: false, error: "repo, number, and mode are required" },
+            { status: 400 },
+          );
+        }
+        if (body.mode !== "hard" && body.mode !== "soft") {
+          return Response.json(
+            { ok: false, error: "mode must be 'hard' or 'soft'" },
+            { status: 400 },
+          );
+        }
+        if (!/^[^/]+\/[^/]+$/.test(body.repo)) {
+          return Response.json(
+            { ok: false, error: "repo must be owner/name" },
+            { status: 400 },
+          );
+        }
+        pin = {
+          repo: body.repo,
+          number: Number(body.number),
+          mode: body.mode,
+          as_skill: body.as_skill ?? null,
+          set_at: new Date().toISOString(),
+        };
+        log(`pin set: ${pin.repo}#${pin.number} (${pin.mode}${pin.as_skill ? `, as ${pin.as_skill}` : ""})`);
+        return Response.json({ ok: true, pin });
+      } catch (err) {
+        return Response.json({ ok: false, error: String(err) }, { status: 400 });
+      }
+    }
+
+    if (req.method === "DELETE" && url.pathname === "/pin") {
+      const prev = pin;
+      pin = null;
+      log(`pin cleared (was ${prev ? `${prev.repo}#${prev.number}` : "none"})`);
+      return Response.json({ ok: true, was: prev });
     }
 
     if (req.method === "GET" && url.pathname === "/deliveries") {
@@ -455,6 +533,17 @@ const httpServer = Bun.serve({
         return Response.json({ ok: true, emitted: false, reason: "no_summary" });
       }
 
+      // Pin gate: hard pin filters out everything that doesn't match
+      const matchesPin = pinMatches(repo, eventType, payload);
+      if (pin && pin.mode === "hard" && !matchesPin) {
+        totalFiltered += 1;
+        logEntry.filtered_reason = "pin_hard_mismatch";
+        log(
+          `filter: delivery_id=${deliveryId} pinned to ${pin.repo}#${pin.number} (hard) — dropped`,
+        );
+        return Response.json({ ok: true, emitted: false, reason: "pin_hard_mismatch" });
+      }
+
       // Routing hints → merge into meta
       const hintMeta = applyRoutingHints(
         live.routing_hints,
@@ -465,6 +554,19 @@ const httpServer = Bun.serve({
         payload,
       );
       Object.assign(summary.meta, hintMeta);
+
+      // Pin meta decoration: any event matching the pin gets flagged.
+      // Soft pin additionally overrides suggested_skill (if set) and priority.
+      if (pin && matchesPin) {
+        summary.meta.pinned = "true";
+        summary.meta.pin_mode = pin.mode;
+        if (pin.mode === "soft") {
+          summary.meta.priority = "critical";
+          if (pin.as_skill) {
+            summary.meta.suggested_skill = pin.as_skill;
+          }
+        }
+      }
 
       // Persist to queue (idempotent by delivery_id; GH dedup)
       const newlyQueued = queue.enqueue({
@@ -498,8 +600,23 @@ const httpServer = Bun.serve({
         totalEmitted += 1;
         logEntry.emitted = true;
         log(
-          `emitted notification for delivery_id=${deliveryId}${hintMeta.suggested_skill ? ` skill=${hintMeta.suggested_skill}` : ""}`,
+          `emitted notification for delivery_id=${deliveryId}${summary.meta.suggested_skill ? ` skill=${summary.meta.suggested_skill}` : ""}${summary.meta.pinned ? " (pinned)" : ""}`,
         );
+
+        // Auto-clear pin when the pinned PR closes (merged or not)
+        if (
+          pin &&
+          matchesPin &&
+          eventType === "pull_request" &&
+          payload.action === "closed"
+        ) {
+          const prev = pin;
+          pin = null;
+          log(
+            `pin auto-cleared after ${prev.repo}#${prev.number} closed (merged=${payload.pull_request?.merged ?? false})`,
+          );
+        }
+
         return Response.json({ ok: true, emitted: true });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
