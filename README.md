@@ -274,6 +274,7 @@ claude-gh-channel/                       # marketplace root (this repo)
 v0.1.0. Bootstrap, the four built-in skills, the nine lifecycle commands, the SQLite queue, the launchd auto-start, and the config-driven steering layer are all landed and end-to-end tested (see `spike/M2-M5-INTEGRATION-EVIDENCE.md`).
 
 Things on the roadmap that v1 doesn't have yet:
+- **Onboarding cleanup** — the install path works but requires several manual workarounds; see [FOLLOWUPS.md](FOLLOWUPS.md) for the punch list
 - Standalone daemon so events don't drop when no watcher is attached
 - Named-tunnel + DNS so the URL doesn't rotate on restart
 - Multi-repo first-class config
