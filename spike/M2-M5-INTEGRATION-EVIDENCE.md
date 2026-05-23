@@ -148,3 +148,85 @@ replay, queue inspection) all behave per design. The M0/M1 pipe (spike 0.5)
 remains the foundation; this evidence shows the layers above it are wired
 correctly. Ready to attach a real Claude session for live event-driven
 skill execution.
+
+---
+
+## Addendum: real-Claude-against-new-server E2E (2026-05-23)
+
+The synthetic smoke above proves the M2-M4 server layer against HMAC-correct
+local traffic. The "implied but not tested" path was: real GH webhook → new
+layered server → real attached Claude → `channel_reply` tool call. Closing
+that loop:
+
+### Setup
+
+- `~/.config/claude-gh-channel/config.yaml` scaffolded from `config/example.yaml` via the
+  setup-command's substitution recipe (github_username from `gh api user --jq .login`).
+- cloudflared quick tunnel: `https://treatment-barriers-results-found.trycloudflare.com`
+- GH webhook 629375502 created on `marklubin/claude-gh-channel` (4 events).
+- Claude spawned in cmux side pane:
+  `CLAUDE_PLUGIN_ROOT=/Users/mark/claude-gh-channel claude --dangerously-load-development-channels server:gh-channel`
+  (`CLAUDE_PLUGIN_ROOT` must be set explicitly in dev mode for `.mcp.json`'s
+  `${CLAUDE_PLUGIN_ROOT}/server/index.ts` to resolve.)
+- Watcher session primed: "Wait for channel events. When one arrives, reply
+  with: event_type | repo#number | action | sender | suggested_skill | priority".
+
+### Trigger 1 — real PR opened
+
+`gh pr create --base main --head spike/m2-m5-final-smoke ...` → PR #2.
+
+### Result
+
+`/health` after the event:
+```json
+{"received":1,"emitted":1,"rejected":0,"filtered":0,"queued_in_session":0,
+ "queue":{"total":1,"pending":0,"emitted":1,"by_event_type":{"pull_request":1}}}
+```
+
+Claude pane:
+```
+← gh-channel: [PR opened] marklubin/claude-gh-channel#2 "M2-M5 final smok…
+⏺ pull_request | marklubin/claude-gh-channel#2 | opened | marklubin | pr-triage | normal
+```
+
+Both `suggested_skill: pr-triage` and `priority: normal` arrived in Claude's
+context — proves config.yaml routing hints flow through the real pipe end-to-end.
+
+### Trigger 2 — `channel_reply` tool
+
+Prompt: "call channel_reply with action_type=status, status_key=gh-channel-smoke,
+text='M2-M5 E2E complete — channel_reply works'"
+
+Claude pane:
+```
+  Called gh-channel
+⏺ Status set: gh-channel-smoke → "M2-M5 E2E complete — channel_reply works".
+```
+
+The `gh-channel` MCP tool (registered in `server/index.ts`'s
+`ListToolsRequestSchema` handler, dispatched to `server/reply.ts`'s
+`channel_reply` action_type=status branch) shelled out to `cmux set-status`
+on the host. Tool call → handler → cmux side effect chain works.
+
+### What this addendum proves vs. the synthetic smoke above
+
+| Layer | Synthetic smoke | Real-Claude smoke |
+|---|---|---|
+| HMAC verify | ✅ self-signed | ✅ GH-signed |
+| Subscription filter | ✅ | ✅ |
+| Routing hints in meta | ✅ (visible in stderr) | ✅ (parsed by Claude, echoed back) |
+| SQLite enqueue + dedup | ✅ | ✅ |
+| `/replay`, `/reload`, `/queue` HTTP | ✅ | (not re-tested; covered above) |
+| `channel_reply` tool registration | inferred (server boots) | ✅ called by Claude |
+| `channel_reply` action_type=status → cmux | not tested | ✅ |
+| Real-GH retry semantics | n/a | not exercised (no failed deliveries) |
+
+### Cleanup performed
+
+- Webhook 629375502 deleted; repo has 0 hooks.
+- PR #2 closed; branch `spike/m2-m5-final-smoke` deleted local + remote.
+- cloudflared killed; port 8788 free.
+- Claude side pane closed.
+
+`~/.config/claude-gh-channel/config.yaml` + `~/.config/claude-gh-channel/secret`
+remain in place — re-running the smoke is a webhook-create + tunnel-up away.
