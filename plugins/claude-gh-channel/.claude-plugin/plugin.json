@@ -1,6 +1,6 @@
 {
   "name": "claude-gh-channel",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Surface GitHub PR/issue/review events into a persistent background Claude session via the MCP channels API. Personal-use; configure once, watch from anywhere.",
   "author": {
     "name": "Mark Lubin",

@@ -12,7 +12,7 @@ Current install requires too many things to go right manually. Specific friction
 
 ### Problems
 
-1. **`bun install` doesn't run in the cache.** Claude Code copies the plugin source into `~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/`, but `server/node_modules/` is gitignored and not copied. First attach of the MCP server fails silently — the server process can't import `@modelcontextprotocol/sdk`, exits, port never binds, `/mcp` shows "Failed to connect" with no obvious cause. **Workaround today:** manually `cd ~/.claude/plugins/cache/marklubin/claude-gh-channel/<v>/server && bun install`.
+1. ~~**`bun install` doesn't run in the cache.**~~ **FIXED in 0.1.4** (2026-05-25). Server now ships pre-bundled (`server/server.bundle.js`, ~750KB) via `bun build --target=bun`. The bundle inlines `@modelcontextprotocol/sdk` and `yaml`; `bun:sqlite` stays external as a Bun built-in. `.mcp.json` runs the bundle directly. No `node_modules` needed in cache. Verified by running the bundle with `node_modules` moved aside.
 
 2. **Self-published channels always need `--dangerously-load-development-channels`.** The channels allowlist is Anthropic-curated. Plain `--channels plugin:<name>@<marketplace>` fails with "not on the approved allowlist." Watcher attachment is therefore a long, scary-looking command with an interactive "I am using this for local development" confirmation prompt every time.
 

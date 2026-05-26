@@ -44,7 +44,7 @@ You read it, edit if needed, paste into the GitHub UI. The skill never speaks fo
 
 ## Quick start
 
-This path is rough — see [FOLLOWUPS.md](FOLLOWUPS.md) for known friction. Plan on 10-15 minutes the first time.
+Plan on 10 minutes the first time.
 
 Prereqs (one-time, with Homebrew):
 
@@ -56,27 +56,17 @@ gh auth login --scopes repo
 Then from any Claude Code session:
 
 ```bash
-# 1. Add the marketplace + install
+# 1. Add the marketplace + install. The plugin's server ships pre-bundled
+#    so there's no manual `bun install` step.
 /plugin marketplace add marklubin/claude-gh-channel
 /plugin install claude-gh-channel@marklubin
 /reload-plugins
-```
 
-```bash
-# 2. (Known gotcha — see FOLLOWUPS.md #1.) The marketplace install copies
-#    the plugin to the cache but DOESN'T run `bun install` there. Until that
-#    gets fixed, you need to install deps in the cache yourself:
-( cd ~/.claude/plugins/cache/marklubin/claude-gh-channel/*/server && bun install )
-```
-
-```bash
-# 3. Bootstrap — generates the webhook secret, starts cloudflared, registers
-#    the GH webhook on a repo you pick, writes config.yaml. Interactive.
+# 2. Bootstrap — generates the webhook secret, starts cloudflared,
+#    registers the GH webhook on a repo you pick, writes config.yaml.
 /claude-gh-channel:gh-channel-setup
-```
 
-```bash
-# 4. Attach a watcher in any terminal or cmux pane.
+# 3. Attach a watcher in any terminal or cmux pane.
 #    The --dangerously-load-development-channels flag is REQUIRED for any
 #    self-published channel plugin during the research preview (Anthropic
 #    curates the allowlist; community marketplaces aren't on it). It will
@@ -254,7 +244,6 @@ Edit `~/.config/claude-gh-channel/config.yaml`, add another entry under `subscri
 
 | Limitation | What it means in practice |
 |---|---|
-| **First-class install (no manual `bun install` step)** | The marketplace copies the plugin to the cache but doesn't run `bun install` there. Quick Start step 2 has the manual workaround. Bundling the server with `bun build --compile` is the fix. See [FOLLOWUPS.md](FOLLOWUPS.md) #1. |
 | **Plain `--channels` (no `--dangerously-load-development-channels`)** | Anthropic curates the channels allowlist; self-published channel plugins always need the dev flag during the research preview. Out of our control. Use the `ghwatch` alias to make it ergonomic. |
 | Server runs inside the Claude session (no separate daemon) | If no watcher is attached when GitHub fires a webhook, the tunnel hop fails and GitHub retries for ~8 hours. Workaround: keep a watcher attached. v2 will split the daemon from the Claude session. |
 | Cloudflared **quick** tunnel URLs rotate | Cloudflared edges drop more often than just on restart — sometimes mid-session, observed multiple times. After rotation, re-run `/claude-gh-channel:gh-channel-setup` to patch the webhook. Named tunnel + DNS support is on the roadmap. |
