@@ -44,35 +44,58 @@ You read it, edit if needed, paste into the GitHub UI. The skill never speaks fo
 
 ## Quick start
 
+This path is rough — see [FOLLOWUPS.md](FOLLOWUPS.md) for known friction. Plan on 10-15 minutes the first time.
+
 Prereqs (one-time, with Homebrew):
 
 ```bash
-brew install bun cloudflared gh
+brew install bun cloudflared gh jq
 gh auth login --scopes repo
 ```
 
-Then:
+Then from any Claude Code session:
 
 ```bash
-# 1. Clone + install server deps
-git clone https://github.com/marklubin/claude-gh-channel ~/claude-gh-channel
-cd ~/claude-gh-channel && (cd plugins/claude-gh-channel/server && bun install)
-
-# 2. From any Claude session, add the marketplace + install the plugin:
+# 1. Add the marketplace + install
 /plugin marketplace add marklubin/claude-gh-channel
 /plugin install claude-gh-channel@marklubin
+/reload-plugins
+```
 
-# 3. Bootstrap — generates a webhook secret, starts a cloudflared tunnel,
-#    registers the GH webhook on a repo you choose, writes config.yaml.
+```bash
+# 2. (Known gotcha — see FOLLOWUPS.md #1.) The marketplace install copies
+#    the plugin to the cache but DOESN'T run `bun install` there. Until that
+#    gets fixed, you need to install deps in the cache yourself:
+( cd ~/.claude/plugins/cache/marklubin/claude-gh-channel/*/server && bun install )
+```
+
+```bash
+# 3. Bootstrap — generates the webhook secret, starts cloudflared, registers
+#    the GH webhook on a repo you pick, writes config.yaml. Interactive.
 /claude-gh-channel:gh-channel-setup
+```
 
-# 4. Attach a watcher session in any terminal or cmux pane:
-claude --channels plugin:claude-gh-channel:gh-channel
+```bash
+# 4. Attach a watcher in any terminal or cmux pane.
+#    The --dangerously-load-development-channels flag is REQUIRED for any
+#    self-published channel plugin during the research preview (Anthropic
+#    curates the allowlist; community marketplaces aren't on it). It will
+#    prompt for confirmation once per launch.
+claude --dangerously-load-development-channels plugin:claude-gh-channel@marklubin --dangerously-skip-permissions
 ```
 
 That's it. Open a PR in the repo you wired up and watch it land.
 
-(Detailed walkthrough with file layouts, what each step writes where, and how to verify it worked: [docs/walkthrough.md](docs/walkthrough.md).)
+The watcher command is long. Drop this in your `~/.zshrc` to alias it:
+
+```bash
+alias ghwatch='claude --dangerously-load-development-channels plugin:claude-gh-channel@marklubin --dangerously-skip-permissions'
+alias ghstatus='curl -s localhost:8788/health 2>/dev/null | jq || echo "no watcher running"'
+```
+
+Then it's just `ghwatch`.
+
+(Detailed walkthrough with file layouts, what each step writes where, and how to verify it worked: [docs/walkthrough.md](docs/walkthrough.md). Full punch list of onboarding rough edges: [FOLLOWUPS.md](FOLLOWUPS.md).)
 
 ## Configure what you watch
 
@@ -231,10 +254,13 @@ Edit `~/.config/claude-gh-channel/config.yaml`, add another entry under `subscri
 
 | Limitation | What it means in practice |
 |---|---|
+| **First-class install (no manual `bun install` step)** | The marketplace copies the plugin to the cache but doesn't run `bun install` there. Quick Start step 2 has the manual workaround. Bundling the server with `bun build --compile` is the fix. See [FOLLOWUPS.md](FOLLOWUPS.md) #1. |
+| **Plain `--channels` (no `--dangerously-load-development-channels`)** | Anthropic curates the channels allowlist; self-published channel plugins always need the dev flag during the research preview. Out of our control. Use the `ghwatch` alias to make it ergonomic. |
 | Server runs inside the Claude session (no separate daemon) | If no watcher is attached when GitHub fires a webhook, the tunnel hop fails and GitHub retries for ~8 hours. Workaround: keep a watcher attached. v2 will split the daemon from the Claude session. |
-| Cloudflared **quick** tunnel URLs rotate | Every cloudflared restart gets a new `*.trycloudflare.com`. After a reboot, run `/claude-gh-channel:gh-channel-setup` to patch the webhook. Named tunnel + DNS support is on the roadmap. |
+| Cloudflared **quick** tunnel URLs rotate | Cloudflared edges drop more often than just on restart — sometimes mid-session, observed multiple times. After rotation, re-run `/claude-gh-channel:gh-channel-setup` to patch the webhook. Named tunnel + DNS support is on the roadmap. |
 | macOS only | Launchd auto-start, cmux integration. Linux/systemd support not in v1. |
 | One Claude watcher per machine | Channels are 1:1 (proven in `spike/0.4-multi-session/EVIDENCE.md`). Multi-watcher fan-out needs the v2 daemon split. |
+| Multi-repo first-class config | Subscriptions can list multiple repos in `config.yaml`, but `/claude-gh-channel:gh-channel-setup` only registers one webhook. Add more by hand. |
 | Lightweight config validation | Required fields + version check. Full JSON-schema validation against `config/schema.json` is on the roadmap. |
 | GitHub only | The architecture supports sibling adapters (Linear, Slack, Recall) but only GitHub is built. |
 
