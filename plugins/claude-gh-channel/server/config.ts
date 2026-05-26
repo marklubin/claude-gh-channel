@@ -31,6 +31,12 @@ export type RoutingHint = {
   meta: Record<string, string>;
 };
 
+export type AutoWatchTrigger = {
+  enabled: boolean;
+  as_skill: string | null;
+  notify: boolean;
+};
+
 export type Config = {
   version: 1;
   user: {
@@ -57,6 +63,10 @@ export type Config = {
     quiet_mode: boolean;
     pause_until: string | null;
     disabled_repos: string[];
+    auto_watch: {
+      on_review_requested: AutoWatchTrigger;
+      on_opened_by_me: AutoWatchTrigger;
+    };
   };
   // Raw config for debug/inspection
   _raw: unknown;
@@ -176,6 +186,13 @@ export function loadConfig(force = false): Config {
   const agent_brief = applyTemplating(briefSource, templateCtx, true) as string;
 
   // Defaults
+  const rawRuntime = (templated.runtime ?? {}) as any;
+  const rawAutoWatch = (rawRuntime.auto_watch ?? {}) as any;
+  const autoWatchTriggerDefault: AutoWatchTrigger = {
+    enabled: false,
+    as_skill: null,
+    notify: false,
+  };
   const runtime = {
     enabled: false,
     http_port: 8788,
@@ -189,7 +206,11 @@ export function loadConfig(force = false): Config {
     quiet_mode: false,
     pause_until: null,
     disabled_repos: [] as string[],
-    ...(templated.runtime ?? {}),
+    ...rawRuntime,
+    auto_watch: {
+      on_review_requested: { ...autoWatchTriggerDefault, ...(rawAutoWatch.on_review_requested ?? {}) },
+      on_opened_by_me: { ...autoWatchTriggerDefault, ...(rawAutoWatch.on_opened_by_me ?? {}) },
+    },
   };
   if (typeof runtime.sqlite_path === "string") runtime.sqlite_path = expandHome(runtime.sqlite_path);
   if (typeof runtime.log_path === "string") runtime.log_path = expandHome(runtime.log_path);

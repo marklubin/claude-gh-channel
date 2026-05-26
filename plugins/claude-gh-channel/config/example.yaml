@@ -85,3 +85,26 @@ runtime:
   quiet_mode: false
   pause_until: null
   disabled_repos: []
+
+  # Auto-add PRs to the watchlist when certain webhook events arrive.
+  # Each trigger has three knobs:
+  #   enabled  — fire or not
+  #   as_skill — default suggested_skill for entries added by this trigger
+  #              (null = no override; entries added with no skill)
+  #   notify   — also fire a `cmux notify` desktop notification on add.
+  #              Works server-side regardless of Claude Code's channels
+  #              org-policy state, so it's a useful real-time ping even
+  #              when channelsEnabled is false.
+  auto_watch:
+    on_review_requested:
+      # Fires when a `pull_request.review_requested` webhook arrives and
+      # the requested reviewer is you (user.github_username).
+      enabled: false
+      as_skill: pr-review-prep
+      notify: true
+    on_opened_by_me:
+      # Fires when a `pull_request.opened` webhook arrives and the PR
+      # author is you. Auto-adds your own PRs to the watchlist.
+      enabled: false
+      as_skill: null
+      notify: false

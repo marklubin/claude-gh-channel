@@ -21010,6 +21010,7 @@ class StdioServerTransport {
 import { readFileSync as readFileSync3, existsSync as existsSync3 } from "fs";
 import { homedir as homedir4 } from "os";
 import { join as join4 } from "path";
+import { spawnSync as spawnSync2 } from "child_process";
 
 // config.ts
 import { readFileSync, existsSync } from "fs";
@@ -21152,6 +21153,13 @@ function loadConfig(force = false) {
     briefSource = "(no agent_brief configured)";
   }
   const agent_brief = applyTemplating(briefSource, templateCtx, true);
+  const rawRuntime = templated.runtime ?? {};
+  const rawAutoWatch = rawRuntime.auto_watch ?? {};
+  const autoWatchTriggerDefault = {
+    enabled: false,
+    as_skill: null,
+    notify: false
+  };
   const runtime = {
     enabled: false,
     http_port: 8788,
@@ -21165,7 +21173,11 @@ function loadConfig(force = false) {
     quiet_mode: false,
     pause_until: null,
     disabled_repos: [],
-    ...templated.runtime ?? {}
+    ...rawRuntime,
+    auto_watch: {
+      on_review_requested: { ...autoWatchTriggerDefault, ...rawAutoWatch.on_review_requested ?? {} },
+      on_opened_by_me: { ...autoWatchTriggerDefault, ...rawAutoWatch.on_opened_by_me ?? {} }
+    }
   };
   if (typeof runtime.sqlite_path === "string")
     runtime.sqlite_path = expandHome(runtime.sqlite_path);
@@ -21713,6 +21725,49 @@ function extractPrNumber(eventType, payload) {
     return payload.pull_request?.number ?? null;
   return null;
 }
+function cmuxNotify(title, body) {
+  const r = spawnSync2("cmux", ["notify", "--title", title, "--body", body], {
+    stdio: ["ignore", "ignore", "pipe"],
+    timeout: 3000
+  });
+  if (r.status !== 0) {
+    log3(`cmux notify failed (status=${r.status}): ${r.stderr?.toString().trim().slice(0, 200)}`);
+  }
+}
+function maybeAutoWatch(repo, eventType, payload) {
+  if (eventType !== "pull_request")
+    return null;
+  const action = payload.action;
+  const me = live.user.github_username;
+  const pr = payload.pull_request;
+  const num = pr?.number;
+  if (num == null)
+    return null;
+  const aw = live.runtime.auto_watch;
+  if (action === "review_requested" && aw.on_review_requested.enabled && payload.requested_reviewer?.login === me) {
+    if (watchlist.find(repo, num))
+      return null;
+    const trig = aw.on_review_requested;
+    watchlist.add(repo, num, trig.as_skill);
+    log3(`auto-watch: review_requested \u2192 added ${repo}#${num} (as_skill=${trig.as_skill ?? "none"})`);
+    if (trig.notify) {
+      cmuxNotify("Review requested", `${repo}#${num} \u2014 ${pr?.title ?? "(untitled)"}`);
+    }
+    return { trigger: "review_requested", added_pr: num };
+  }
+  if (action === "opened" && aw.on_opened_by_me.enabled && pr?.user?.login === me) {
+    if (watchlist.find(repo, num))
+      return null;
+    const trig = aw.on_opened_by_me;
+    watchlist.add(repo, num, trig.as_skill);
+    log3(`auto-watch: opened_by_me \u2192 added ${repo}#${num} (as_skill=${trig.as_skill ?? "none"})`);
+    if (trig.notify) {
+      cmuxNotify("PR opened (you)", `${repo}#${num} \u2014 ${pr?.title ?? "(untitled)"}`);
+    }
+    return { trigger: "opened_by_me", added_pr: num };
+  }
+  return null;
+}
 var httpServer = Bun.serve({
   port: HTTP_PORT,
   hostname: "127.0.0.1",
@@ -21920,6 +21975,7 @@ var httpServer = Bun.serve({
         log3(`filter: delivery_id=${deliveryId} no summary for event=${eventType} action=${payload.action}`);
         return Response.json({ ok: true, emitted: false, reason: "no_summary" });
       }
+      const autoWatched = maybeAutoWatch(repo, eventType, payload);
       const eventPrNumber = extractPrNumber(eventType, payload);
       const onWatchlist = eventPrNumber != null && watchlist.matches(repo, eventPrNumber);
       if (!watchlist.isEmpty() && watchlist.mode() === "hard" && !onWatchlist) {
@@ -21943,6 +21999,10 @@ var httpServer = Bun.serve({
             summary.meta.suggested_skill = entry.as_skill;
           }
         }
+      }
+      if (autoWatched) {
+        summary.meta.auto_watched = "true";
+        summary.meta.auto_watch_trigger = autoWatched.trigger;
       }
       const newlyQueued = queue.enqueue({
         delivery_id: deliveryId,

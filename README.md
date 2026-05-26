@@ -174,7 +174,7 @@ All commands are **namespaced** under the plugin name — Claude Code prefixes p
 | `/claude-gh-channel:gh-channel-reload` | Re-read `config.yaml`. Subscriptions, routing hints, and filter expressions update live; brief + port need a watcher restart. |
 | `/claude-gh-channel:gh-channel-queue` | Show pending + recent events from the SQLite queue. |
 | `/claude-gh-channel:gh-channel-replay <delivery_id>` | Re-emit a past event to the watcher. Accepts a prefix if unambiguous. |
-| `/claude-gh-channel:gh-channel-watch add pr <url> [--as <skill>]` | Add a PR to the active watchlist. Multiple PRs supported. Auto-removes on close. Subcommands: `remove`, `show`, `clear`, `mode hard\|soft`. Persists to disk. |
+| `/claude-gh-channel:gh-channel-watch add pr <url> [--as <skill>]` | Add a PR to the active watchlist. Multiple PRs supported. Auto-removes on close. Subcommands: `remove`, `show`, `clear`, `mode hard\|soft`. Persists to disk. Also auto-added by `runtime.auto_watch` config (review-requested PRs + your own opened PRs) with optional `cmux notify` desktop pings. |
 | `/claude-gh-channel:gh-channel-pin pr <url> --hard\|--soft [--as <skill>]` | One-shot shorthand: clears watchlist, sets mode, adds one entry. Use `/gh-channel-watch` for multi-PR. |
 | `/claude-gh-channel:gh-channel-uninstall` | Confirmed teardown: delete GH webhook, stop tunnel, remove launchd plist, archive SQLite DB. Leaves config + secret. |
 
@@ -245,6 +245,7 @@ Edit `~/.config/claude-gh-channel/config.yaml`, add another entry under `subscri
 
 | Limitation | What it means in practice |
 |---|---|
+| **`channelsEnabled` org policy on Team/Enterprise plans** | If your Claude Code plan is "Claude Team" or "Enterprise", channel notifications are gated by your org's managed settings. The watcher will boot and you'll see `--dangerously-load-development-channels blocked by org policy / Inbound messages will be silently dropped` at the top of the watcher pane. Fix: have your admin set `channelsEnabled: true` in [managed settings](https://code.claude.com/docs/en/server-managed-settings). Until then, channel-into-pane is broken, but everything server-side still works — including the `auto_watch` + `cmux notify` path which is the alternative real-time surface. |
 | **Plain `--channels` (no `--dangerously-load-development-channels`)** | Anthropic curates the channels allowlist; self-published channel plugins always need the dev flag during the research preview. Out of our control. Use the `ghwatch` alias to make it ergonomic. |
 | Server runs inside the Claude session (no separate daemon) | If no watcher is attached when GitHub fires a webhook, the tunnel hop fails and GitHub retries for ~8 hours. Workaround: keep a watcher attached. v2 will split the daemon from the Claude session. |
 | Cloudflared **quick** tunnel URLs rotate | Cloudflared edges drop more often than just on restart — sometimes mid-session, observed multiple times. After rotation, re-run `/claude-gh-channel:gh-channel-setup` to patch the webhook. Named tunnel + DNS support is on the roadmap. |

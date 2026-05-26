@@ -29,6 +29,7 @@ import {
 import { readFileSync, existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { spawnSync } from "node:child_process";
 
 import { loadConfig, type Config } from "./config";
 import { matchSubscription, applyRoutingHints } from "./filters";
@@ -322,6 +323,77 @@ function watchlistMatchesEvent(repo: string, eventType: string, payload: any): b
   return watchlist.matches(repo, n);
 }
 
+function cmuxNotify(title: string, body: string): void {
+  const r = spawnSync("cmux", ["notify", "--title", title, "--body", body], {
+    stdio: ["ignore", "ignore", "pipe"],
+    timeout: 3000,
+  });
+  if (r.status !== 0) {
+    log(`cmux notify failed (status=${r.status}): ${r.stderr?.toString().trim().slice(0, 200)}`);
+  }
+}
+
+/**
+ * Server-side auto-watch hooks. Called from the webhook handler before the
+ * watchlist filter — so an event that triggers auto-watch can also pass
+ * through under hard-mode gating (the entry is on the list by the time
+ * the gate runs).
+ *
+ * Returns the trigger name if auto-watch fired, null otherwise. Idempotent:
+ * if the PR is already on the watchlist, no add + no notify.
+ */
+function maybeAutoWatch(
+  repo: string,
+  eventType: string,
+  payload: any,
+): { trigger: string; added_pr: number } | null {
+  if (eventType !== "pull_request") return null;
+  const action = payload.action;
+  const me = live.user.github_username;
+  const pr = payload.pull_request;
+  const num: number | undefined = pr?.number;
+  if (num == null) return null;
+
+  const aw = live.runtime.auto_watch;
+
+  // Trigger 1: review_requested + I am the requested reviewer
+  if (
+    action === "review_requested" &&
+    aw.on_review_requested.enabled &&
+    payload.requested_reviewer?.login === me
+  ) {
+    if (watchlist.find(repo, num)) return null;
+    const trig = aw.on_review_requested;
+    watchlist.add(repo, num, trig.as_skill);
+    log(`auto-watch: review_requested → added ${repo}#${num} (as_skill=${trig.as_skill ?? "none"})`);
+    if (trig.notify) {
+      cmuxNotify(
+        "Review requested",
+        `${repo}#${num} — ${pr?.title ?? "(untitled)"}`,
+      );
+    }
+    return { trigger: "review_requested", added_pr: num };
+  }
+
+  // Trigger 2: opened by me
+  if (
+    action === "opened" &&
+    aw.on_opened_by_me.enabled &&
+    pr?.user?.login === me
+  ) {
+    if (watchlist.find(repo, num)) return null;
+    const trig = aw.on_opened_by_me;
+    watchlist.add(repo, num, trig.as_skill);
+    log(`auto-watch: opened_by_me → added ${repo}#${num} (as_skill=${trig.as_skill ?? "none"})`);
+    if (trig.notify) {
+      cmuxNotify("PR opened (you)", `${repo}#${num} — ${pr?.title ?? "(untitled)"}`);
+    }
+    return { trigger: "opened_by_me", added_pr: num };
+  }
+
+  return null;
+}
+
 const httpServer = Bun.serve({
   port: HTTP_PORT,
   hostname: "127.0.0.1",
@@ -588,6 +660,11 @@ const httpServer = Bun.serve({
         return Response.json({ ok: true, emitted: false, reason: "no_summary" });
       }
 
+      // Auto-watch hook: fires before the watchlist gate so an event that
+      // triggers auto-add isn't filtered before it has a chance to add
+      // itself. Re-check watchlist membership after the hook runs.
+      const autoWatched = maybeAutoWatch(repo, eventType, payload);
+
       // Watchlist gate: when non-empty + hard mode, drop events not on the list
       const eventPrNumber = extractPrNumber(eventType, payload);
       const onWatchlist = eventPrNumber != null && watchlist.matches(repo, eventPrNumber);
@@ -629,6 +706,13 @@ const httpServer = Bun.serve({
             summary.meta.suggested_skill = entry.as_skill;
           }
         }
+      }
+      // Annotate events that just auto-added their own PR to the watchlist,
+      // so the watcher Claude can distinguish "user manually watched" from
+      // "server auto-watched in response to this event."
+      if (autoWatched) {
+        summary.meta.auto_watched = "true";
+        summary.meta.auto_watch_trigger = autoWatched.trigger;
       }
 
       // Persist to queue (idempotent by delivery_id; GH dedup)
