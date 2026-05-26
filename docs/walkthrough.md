@@ -5,21 +5,27 @@ A guided tour of `claude-gh-channel` from first install to first PR-event-in-Cla
 ## TL;DR
 
 ```bash
-# 1. Clone
-git clone https://github.com/marklubin/claude-gh-channel ~/claude-gh-channel
+# Prereqs
+brew install bun cloudflared gh jq && gh auth login --scopes repo
 
-# 2. Install bun deps
-(cd ~/claude-gh-channel/server && bun install)
+# 1. In a Claude Code session: add marketplace + install (server ships
+#    pre-bundled — no `bun install` needed).
+/plugin marketplace add marklubin/claude-gh-channel
+/plugin install claude-gh-channel@marklubin
+/reload-plugins
 
-# 3. In a Claude Code session
-/plugin install file://$HOME/claude-gh-channel
+# 2. Bootstrap (interactive)
 /claude-gh-channel:gh-channel-setup
 
-# 4. In another terminal, attach a watcher session
-claude --channels plugin:claude-gh-channel:gh-channel
+# 3. In another terminal/pane, attach a watcher. The dev-channels flag is
+#    required for self-published channel plugins (see Known limitations).
+claude --dangerously-load-development-channels plugin:claude-gh-channel@marklubin --dangerously-skip-permissions
 
-# 5. Trigger a GH event (open a PR, leave a comment, etc.) and watch it land in the watcher pane.
+# 4. Trigger a GH event (open a PR, leave a comment, etc.) and watch it land.
 ```
+
+(The watcher command is long — the README's `ghwatch` alias wraps it and
+self-heals the tunnel first.)
 
 That's the happy path. The rest of this doc walks each piece in detail.
 
@@ -27,7 +33,7 @@ That's the happy path. The rest of this doc walks each piece in detail.
 
 ```
 ┌─────────────────┐           ┌────────────────────┐         ┌──────────────────┐
-│  GitHub repo    │ webhook   │  cloudflared       │ HTTP    │  bun server.ts   │
+│  GitHub repo    │ webhook   │  cloudflared       │ HTTP    │ server.bundle.js │
 │  <your/repo>    ├──────────►│  quick tunnel      ├────────►│  (MCP subprocess │
 │  (4 events sub) │  HMAC     │  *.trycloudflare   │ :8788   │   of Claude)     │
 └─────────────────┘  signed   └────────────────────┘         └────────┬─────────┘
@@ -44,10 +50,11 @@ And on disk:
 
 ```
 ~/.config/claude-gh-channel/
-├── config.yaml          # Declarative config (subscriptions, brief, hints)
+├── config.yaml          # Declarative config (subscriptions, brief, hints, auto_watch)
 ├── config.json          # Operational state (webhook id, tunnel url, timestamps)
 ├── secret               # 32-byte hex, mode 0600
 ├── tunnel-url           # Current cloudflared URL (rotates on restart)
+├── watchlist.json       # Persistent watchlist (entries + hard/soft mode)
 ├── cloudflared.log      # Tunnel logs
 ├── cloudflared.pid      # Tunnel pid for kill
 └── drafts/              # Where channel_reply writes review/triage/comment drafts
@@ -76,13 +83,17 @@ If any missing, install: `brew install bun cloudflared gh && gh auth login --sco
 From a Claude Code session anywhere:
 
 ```
-/plugin install file:///Users/<you>/claude-gh-channel
+/plugin marketplace add marklubin/claude-gh-channel
+/plugin install claude-gh-channel@marklubin
+/reload-plugins
 ```
 
 That registers:
-- The MCP server (`gh-channel`) from the plugin's `.mcp.json`
+- The MCP server (`gh-channel`) from the plugin's `.mcp.json`, declared as a channel in `plugin.json`
 - The slash commands from `commands/` (namespaced as `/claude-gh-channel:<name>` in your session)
 - The handler skills from `skills/`
+
+The server is pre-bundled (`server/server.bundle.js`), so there's no `bun install` step in the cache — it just runs.
 
 ### 3. Bootstrap
 
@@ -102,13 +113,13 @@ The command is idempotent — re-running it updates the tunnel URL on the webhoo
 
 ### 4. Attach a watcher session
 
-In a new terminal or cmux pane:
+In a new terminal or cmux pane (the `--dangerously-load-development-channels` flag is required for self-published channel plugins):
 
 ```bash
-claude --channels plugin:claude-gh-channel:gh-channel
+claude --dangerously-load-development-channels plugin:claude-gh-channel@marklubin --dangerously-skip-permissions
 ```
 
-This spawns `bun ${CLAUDE_PLUGIN_ROOT}/server/index.ts` as a subprocess. The server:
+This spawns `bun ${CLAUDE_PLUGIN_ROOT}/server/server.bundle.js` as a subprocess. The server:
 - Reads config + secret from `~/.config/claude-gh-channel/`
 - Binds `127.0.0.1:8788`
 - Opens the SQLite queue
@@ -166,16 +177,26 @@ Out of the box you get four skills. They're triggered by the watcher Claude read
 
 All four are **drafts-only**. Nothing gets posted to GitHub. Drafts land in `~/.config/claude-gh-channel/drafts/`.
 
-## Tunnel URL rotation (real, watch for it)
+## The watchlist + auto-watch
 
-Cloudflared **quick tunnels** rotate URLs on every restart. Practical consequence: every time cloudflared restarts (laptop reboot, crash, manual kill), the webhook on GitHub now points at a dead URL. GH retries for ~8h then gives up.
+Beyond the standing `subscriptions` + `routing_hints`, you can focus the watcher on a specific set of PRs:
 
-Two fixes, by effort:
+- **Manual**: `/claude-gh-channel:gh-channel-watch add pr <url> [--as <skill>]`, plus `remove` / `show` / `clear` / `mode hard|soft`. Backed by `~/.config/claude-gh-channel/watchlist.json` (survives restart). `soft` mode flags watched-PR events as `priority: critical`; `hard` mode drops everything not on the list. Entries auto-remove when their PR closes.
+- **Automatic** (`runtime.auto_watch` in config.yaml): auto-add PRs when you're requested as reviewer (`on_review_requested`) or open your own PR (`on_opened_by_me`), each with an optional default `as_skill` and a `cmux notify` desktop ping. The `notify` path runs server-side and works even when channels are gated by org policy — so on a Team/Enterprise plan without `channelsEnabled`, you still get a desktop notification when a review lands.
 
-- **Cheap**: re-run `/claude-gh-channel:gh-channel-setup` after reboot. It detects the new URL and updates the webhook.
-- **Right**: switch to a cloudflared **named tunnel** with a DNS record you control. That's a one-time setup, stable URL, no rotation. Not in v1.
+`/claude-gh-channel:gh-channel-pin pr <url> --hard|--soft` is the single-PR shorthand (clear + set mode + add one).
 
-`/claude-gh-channel:gh-channel-status` will tell you if the configured webhook URL doesn't match the currently-running tunnel.
+## Tunnel flakiness (the #1 thing that breaks a live setup)
+
+Cloudflared **quick tunnels** are account-less and have no uptime guarantee. They rotate URLs on restart, drop mid-session, and their DNS can take minutes to propagate or fail outright (`NXDOMAIN` / `530` under Cloudflare service load — observed repeatedly). When the tunnel's URL is dead, the webhook on GitHub points at nothing; GH retries for ~8h then gives up.
+
+Fixes, by effort:
+
+- **Built-in self-heal (default):** `ghwatch` runs `scripts/ensure-tunnel.sh` before attaching, and `/claude-gh-channel:gh-channel-tunnel` (or `ghtunnel`) does it on demand. The script health-checks the current tunnel and, if it's dead, provisions a fresh one + repoints the webhook automatically. A real HTTP response (even a 502 "server down") counts as alive; only a dead edge (timeout / no URL) triggers a refresh.
+- **If a fresh tunnel won't resolve:** that's Cloudflare's edge being slow to assign/propagate the hostname — not a config problem. Wait 30-60s and re-run `ghtunnel`.
+- **Durable fix:** a cloudflared **named tunnel** with a DNS record you control — stable URL, no rotation, no NXDOMAIN roulette. One-time setup, needs a Cloudflare account + domain. On the roadmap, not in v1.
+
+`/claude-gh-channel:gh-channel-status` reports whether the configured webhook URL matches the currently-running tunnel and whether it's reachable.
 
 ## When events drop (and how you know)
 
@@ -227,7 +248,11 @@ Secret mismatch between `~/.config/claude-gh-channel/secret` and the GH webhook 
 
 ### Tunnel URL changed but webhook still points at the old one
 
-Run `/claude-gh-channel:gh-channel-setup` — it's idempotent and will update the URL on the existing webhook.
+Run `/claude-gh-channel:gh-channel-tunnel` (or `ghtunnel`) — it self-heals: fresh tunnel + repointed webhook. `/claude-gh-channel:gh-channel-setup` also works.
+
+### Watcher pane shows "blocked by org policy / inbound messages will be silently dropped"
+
+Your Claude Code org (Team or Enterprise) hasn't enabled channels. An admin must set `channelsEnabled: true` in [managed settings](https://code.claude.com/docs/en/server-managed-settings); it syncs to `~/.claude/remote-settings.json`. Restart the watcher after it lands (the policy is read at session start — restarting in the same minute as the sync can race and read the stale value). Until then, channel-into-pane is off, but `auto_watch` + `cmux notify` still surface events server-side.
 
 ### Server won't start: "config: ~/.config/claude-gh-channel/config.yaml not found"
 
@@ -235,7 +260,7 @@ You haven't run `/claude-gh-channel:gh-channel-setup` yet. Run it.
 
 ### Server crashed mid-session
 
-Re-attach with `claude --channels plugin:claude-gh-channel:gh-channel`. The queue will replay anything that hadn't emitted.
+Re-attach with `ghwatch` (or `claude --dangerously-load-development-channels plugin:claude-gh-channel@marklubin --dangerously-skip-permissions`). The queue will replay anything that hadn't emitted.
 
 ## What's NOT in v1
 
