@@ -174,7 +174,8 @@ All commands are **namespaced** under the plugin name — Claude Code prefixes p
 | `/claude-gh-channel:gh-channel-reload` | Re-read `config.yaml`. Subscriptions, routing hints, and filter expressions update live; brief + port need a watcher restart. |
 | `/claude-gh-channel:gh-channel-queue` | Show pending + recent events from the SQLite queue. |
 | `/claude-gh-channel:gh-channel-replay <delivery_id>` | Re-emit a past event to the watcher. Accepts a prefix if unambiguous. |
-| `/claude-gh-channel:gh-channel-pin pr <url> --hard\|--soft [--as <skill>]` | Focus the watcher on a single PR. Hard = filter everything else; soft = decorate matching events with `pinned: true` + `priority: critical`. Auto-clears when the PR closes. Subcommands: `show`, `clear`. |
+| `/claude-gh-channel:gh-channel-watch add pr <url> [--as <skill>]` | Add a PR to the active watchlist. Multiple PRs supported. Auto-removes on close. Subcommands: `remove`, `show`, `clear`, `mode hard\|soft`. Persists to disk. |
+| `/claude-gh-channel:gh-channel-pin pr <url> --hard\|--soft [--as <skill>]` | One-shot shorthand: clears watchlist, sets mode, adds one entry. Use `/gh-channel-watch` for multi-PR. |
 | `/claude-gh-channel:gh-channel-uninstall` | Confirmed teardown: delete GH webhook, stop tunnel, remove launchd plist, archive SQLite DB. Leaves config + secret. |
 
 ## How it actually works

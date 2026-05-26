@@ -34,6 +34,7 @@ import { loadConfig, type Config } from "./config";
 import { matchSubscription, applyRoutingHints } from "./filters";
 import { EventQueue } from "./queue";
 import { REPLY_TOOL, makeHandler } from "./reply";
+import { Watchlist, type WatchMode } from "./watchlist";
 
 const CONFIG_DIR = join(homedir(), ".config", "claude-gh-channel");
 const SECRET_FILE = join(CONFIG_DIR, "secret");
@@ -301,18 +302,11 @@ let totalFiltered = 0;
 let totalQueued = 0;
 
 // ────────────────────────────────────────────────────────────────────────────
-// Pin — focus the watcher on a single PR
+// Watchlist — set of PRs the user is focused on. Generalizes the old `pin`.
+// Persisted to disk; mode-level hard/soft.
 // ────────────────────────────────────────────────────────────────────────────
 
-type Pin = {
-  repo: string;
-  number: number;
-  mode: "hard" | "soft";
-  as_skill: string | null;
-  set_at: string;
-};
-
-let pin: Pin | null = null;
+const watchlist = new Watchlist();
 
 function extractPrNumber(eventType: string, payload: any): number | null {
   if (eventType === "pull_request") return payload.pull_request?.number ?? null;
@@ -322,11 +316,10 @@ function extractPrNumber(eventType: string, payload: any): number | null {
   return null;
 }
 
-function pinMatches(repo: string, eventType: string, payload: any): boolean {
-  if (!pin) return false;
-  if (pin.repo !== repo) return false;
+function watchlistMatchesEvent(repo: string, eventType: string, payload: any): boolean {
   const n = extractPrNumber(eventType, payload);
-  return n != null && n === pin.number;
+  if (n == null) return false;
+  return watchlist.matches(repo, n);
 }
 
 const httpServer = Bun.serve({
@@ -337,6 +330,7 @@ const httpServer = Bun.serve({
 
     if (req.method === "GET" && url.pathname === "/health") {
       const qstats = queue.stats();
+      const wl = watchlist.get();
       return Response.json({
         ok: true,
         port: HTTP_PORT,
@@ -348,20 +342,91 @@ const httpServer = Bun.serve({
         quiet: isQuiet(),
         paused_until: live.runtime.pause_until,
         subscriptions: live.subscriptions.length,
-        pin,
+        watchlist: { mode: wl.mode, count: wl.entries.length, entries: wl.entries },
         queue: qstats,
       });
     }
 
-    // ── Pin endpoints ───────────────────────────────────────────────────────
+    // ── Watchlist endpoints ─────────────────────────────────────────────────
+
+    if (req.method === "GET" && url.pathname === "/watch") {
+      return Response.json({ watchlist: watchlist.get() });
+    }
+
+    if (req.method === "POST" && url.pathname === "/watch") {
+      try {
+        const body = (await req.json()) as {
+          repo?: string;
+          number?: number;
+          as_skill?: string | null;
+        };
+        if (!body.repo || !body.number) {
+          return Response.json(
+            { ok: false, error: "repo + number required" },
+            { status: 400 },
+          );
+        }
+        if (!/^[^/]+\/[^/]+$/.test(body.repo)) {
+          return Response.json(
+            { ok: false, error: "repo must be owner/name" },
+            { status: 400 },
+          );
+        }
+        const entry = watchlist.add(body.repo, Number(body.number), body.as_skill ?? null);
+        return Response.json({ ok: true, entry, watchlist: watchlist.get() });
+      } catch (err) {
+        return Response.json({ ok: false, error: String(err) }, { status: 400 });
+      }
+    }
+
+    if (req.method === "DELETE" && url.pathname === "/watch") {
+      // DELETE /watch with body → remove specific; without body → clear all
+      let body: { repo?: string; number?: number } = {};
+      try { body = (await req.json()) as any; } catch { /* empty body = clear all */ }
+      if (body && body.repo && body.number) {
+        const removed = watchlist.remove(body.repo, Number(body.number));
+        if (!removed) return Response.json({ ok: false, error: "not in watchlist" }, { status: 404 });
+        return Response.json({ ok: true, removed, watchlist: watchlist.get() });
+      }
+      const count = watchlist.clear();
+      return Response.json({ ok: true, cleared: count, watchlist: watchlist.get() });
+    }
+
+    if (req.method === "POST" && url.pathname === "/watch/mode") {
+      try {
+        const body = (await req.json()) as { mode?: WatchMode };
+        if (body.mode !== "hard" && body.mode !== "soft") {
+          return Response.json(
+            { ok: false, error: "mode must be 'hard' or 'soft'" },
+            { status: 400 },
+          );
+        }
+        watchlist.setMode(body.mode);
+        return Response.json({ ok: true, watchlist: watchlist.get() });
+      } catch (err) {
+        return Response.json({ ok: false, error: String(err) }, { status: 400 });
+      }
+    }
+
+    // ── Pin endpoints (back-compat aliases — single-entry watchlist ops) ────
 
     if (req.method === "GET" && url.pathname === "/pin") {
-      return Response.json({ pin });
+      const wl = watchlist.get();
+      const pin = wl.entries.length === 1
+        ? { ...wl.entries[0], mode: wl.mode, set_at: wl.entries[0].added_at }
+        : null;
+      return Response.json({ pin, deprecated: "use /watch", watchlist_count: wl.entries.length });
     }
 
     if (req.method === "POST" && url.pathname === "/pin") {
+      // Legacy single-PR pin: clears watchlist, sets mode, adds one entry.
       try {
-        const body = (await req.json()) as Partial<Pin>;
+        const body = (await req.json()) as {
+          repo?: string;
+          number?: number;
+          mode?: WatchMode;
+          as_skill?: string | null;
+        };
         if (!body.repo || !body.number || !body.mode) {
           return Response.json(
             { ok: false, error: "repo, number, and mode are required" },
@@ -374,31 +439,21 @@ const httpServer = Bun.serve({
             { status: 400 },
           );
         }
-        if (!/^[^/]+\/[^/]+$/.test(body.repo)) {
-          return Response.json(
-            { ok: false, error: "repo must be owner/name" },
-            { status: 400 },
-          );
-        }
-        pin = {
-          repo: body.repo,
-          number: Number(body.number),
-          mode: body.mode,
-          as_skill: body.as_skill ?? null,
-          set_at: new Date().toISOString(),
-        };
-        log(`pin set: ${pin.repo}#${pin.number} (${pin.mode}${pin.as_skill ? `, as ${pin.as_skill}` : ""})`);
-        return Response.json({ ok: true, pin });
+        watchlist.clear();
+        watchlist.setMode(body.mode);
+        const entry = watchlist.add(body.repo, Number(body.number), body.as_skill ?? null);
+        log(`pin (back-compat): cleared + mode=${body.mode} + added ${entry.repo}#${entry.number}`);
+        return Response.json({ ok: true, pin: { ...entry, mode: body.mode } });
       } catch (err) {
         return Response.json({ ok: false, error: String(err) }, { status: 400 });
       }
     }
 
     if (req.method === "DELETE" && url.pathname === "/pin") {
-      const prev = pin;
-      pin = null;
-      log(`pin cleared (was ${prev ? `${prev.repo}#${prev.number}` : "none"})`);
-      return Response.json({ ok: true, was: prev });
+      const was = watchlist.get();
+      watchlist.clear();
+      log(`pin cleared (back-compat): emptied watchlist (had ${was.entries.length} entries)`);
+      return Response.json({ ok: true, was });
     }
 
     if (req.method === "GET" && url.pathname === "/deliveries") {
@@ -533,15 +588,16 @@ const httpServer = Bun.serve({
         return Response.json({ ok: true, emitted: false, reason: "no_summary" });
       }
 
-      // Pin gate: hard pin filters out everything that doesn't match
-      const matchesPin = pinMatches(repo, eventType, payload);
-      if (pin && pin.mode === "hard" && !matchesPin) {
+      // Watchlist gate: when non-empty + hard mode, drop events not on the list
+      const eventPrNumber = extractPrNumber(eventType, payload);
+      const onWatchlist = eventPrNumber != null && watchlist.matches(repo, eventPrNumber);
+      if (!watchlist.isEmpty() && watchlist.mode() === "hard" && !onWatchlist) {
         totalFiltered += 1;
-        logEntry.filtered_reason = "pin_hard_mismatch";
+        logEntry.filtered_reason = "watchlist_hard_mismatch";
         log(
-          `filter: delivery_id=${deliveryId} pinned to ${pin.repo}#${pin.number} (hard) — dropped`,
+          `filter: delivery_id=${deliveryId} not on hard watchlist (${watchlist.get().entries.length} entries) — dropped`,
         );
-        return Response.json({ ok: true, emitted: false, reason: "pin_hard_mismatch" });
+        return Response.json({ ok: true, emitted: false, reason: "watchlist_hard_mismatch" });
       }
 
       // Routing hints → merge into meta
@@ -555,15 +611,22 @@ const httpServer = Bun.serve({
       );
       Object.assign(summary.meta, hintMeta);
 
-      // Pin meta decoration: any event matching the pin gets flagged.
-      // Soft pin additionally overrides suggested_skill (if set) and priority.
-      if (pin && matchesPin) {
-        summary.meta.pinned = "true";
-        summary.meta.pin_mode = pin.mode;
-        if (pin.mode === "soft") {
+      // Watchlist meta decoration. Any event whose PR is on the list gets
+      // flagged. Soft mode additionally overrides suggested_skill (per-entry
+      // as_skill, if set) and sets priority=critical. `pinned`/`pin_mode`
+      // emitted as aliases for back-compat with skills written against the
+      // 0.1.x pin meta.
+      if (onWatchlist && eventPrNumber != null) {
+        const entry = watchlist.find(repo, eventPrNumber);
+        const mode = watchlist.mode();
+        summary.meta.watched = "true";
+        summary.meta.watch_mode = mode;
+        summary.meta.pinned = "true"; // back-compat
+        summary.meta.pin_mode = mode; // back-compat
+        if (mode === "soft") {
           summary.meta.priority = "critical";
-          if (pin.as_skill) {
-            summary.meta.suggested_skill = pin.as_skill;
+          if (entry?.as_skill) {
+            summary.meta.suggested_skill = entry.as_skill;
           }
         }
       }
@@ -603,18 +666,22 @@ const httpServer = Bun.serve({
           `emitted notification for delivery_id=${deliveryId}${summary.meta.suggested_skill ? ` skill=${summary.meta.suggested_skill}` : ""}${summary.meta.pinned ? " (pinned)" : ""}`,
         );
 
-        // Auto-clear pin when the pinned PR closes (merged or not)
+        // Auto-clear: when a watched PR closes, remove its entry from the
+        // watchlist. Mode is preserved; if the list goes empty, it stays
+        // empty (effectively no-op until another entry is added).
         if (
-          pin &&
-          matchesPin &&
+          onWatchlist &&
+          eventPrNumber != null &&
           eventType === "pull_request" &&
           payload.action === "closed"
         ) {
-          const prev = pin;
-          pin = null;
-          log(
-            `pin auto-cleared after ${prev.repo}#${prev.number} closed (merged=${payload.pull_request?.merged ?? false})`,
-          );
+          const removed = watchlist.remove(repo, eventPrNumber);
+          if (removed) {
+            log(
+              `watchlist auto-remove: ${removed.repo}#${removed.number} closed ` +
+                `(merged=${payload.pull_request?.merged ?? false}) — ${watchlist.get().entries.length} entries remain`,
+            );
+          }
         }
 
         return Response.json({ ok: true, emitted: true });

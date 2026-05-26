@@ -21007,9 +21007,9 @@ class StdioServerTransport {
 }
 
 // index.ts
-import { readFileSync as readFileSync2, existsSync as existsSync2 } from "fs";
-import { homedir as homedir3 } from "os";
-import { join as join3 } from "path";
+import { readFileSync as readFileSync3, existsSync as existsSync3 } from "fs";
+import { homedir as homedir4 } from "os";
+import { join as join4 } from "path";
 
 // config.ts
 import { readFileSync, existsSync } from "fs";
@@ -21415,16 +21415,112 @@ function cmux(args) {
   }
 }
 
+// watchlist.ts
+import { existsSync as existsSync2, readFileSync as readFileSync2, writeFileSync as writeFileSync2, mkdirSync as mkdirSync3 } from "fs";
+import { homedir as homedir3 } from "os";
+import { join as join3, dirname as dirname3 } from "path";
+var DEFAULT_PATH = join3(homedir3(), ".config", "claude-gh-channel", "watchlist.json");
+var PATH = process.env.GH_CHANNEL_WATCHLIST ?? DEFAULT_PATH;
+var log2 = (...args) => console.error("[gh-channel:watchlist]", ...args);
+function emptyState() {
+  return { mode: "soft", entries: [], updated_at: new Date().toISOString() };
+}
+
+class Watchlist {
+  state;
+  constructor() {
+    this.state = this.load();
+  }
+  load() {
+    if (!existsSync2(PATH))
+      return emptyState();
+    try {
+      const raw = JSON.parse(readFileSync2(PATH, "utf8"));
+      if (raw.mode !== "hard" && raw.mode !== "soft")
+        return emptyState();
+      if (!Array.isArray(raw.entries))
+        return emptyState();
+      const entries = raw.entries.filter((e) => typeof e === "object" && typeof e.repo === "string" && typeof e.number === "number" && /^[^/]+\/[^/]+$/.test(e.repo));
+      log2(`loaded ${entries.length} entries from ${PATH}; mode=${raw.mode}`);
+      return {
+        mode: raw.mode,
+        entries,
+        updated_at: raw.updated_at ?? new Date().toISOString()
+      };
+    } catch (err) {
+      log2(`load failed: ${err}; starting empty`);
+      return emptyState();
+    }
+  }
+  save() {
+    this.state.updated_at = new Date().toISOString();
+    mkdirSync3(dirname3(PATH), { recursive: true });
+    writeFileSync2(PATH, JSON.stringify(this.state, null, 2) + `
+`, { mode: 384 });
+  }
+  get() {
+    return { ...this.state, entries: [...this.state.entries] };
+  }
+  isEmpty() {
+    return this.state.entries.length === 0;
+  }
+  mode() {
+    return this.state.mode;
+  }
+  setMode(mode) {
+    this.state.mode = mode;
+    this.save();
+    log2(`mode set: ${mode}`);
+  }
+  matches(repo, number4) {
+    return this.state.entries.some((e) => e.repo === repo && e.number === number4);
+  }
+  find(repo, number4) {
+    return this.state.entries.find((e) => e.repo === repo && e.number === number4) ?? null;
+  }
+  add(repo, number4, as_skill = null) {
+    const existing = this.find(repo, number4);
+    if (existing)
+      return existing;
+    const entry = {
+      repo,
+      number: number4,
+      as_skill,
+      added_at: new Date().toISOString()
+    };
+    this.state.entries.push(entry);
+    this.save();
+    log2(`added ${repo}#${number4}${as_skill ? ` (as ${as_skill})` : ""}`);
+    return entry;
+  }
+  remove(repo, number4) {
+    const idx = this.state.entries.findIndex((e) => e.repo === repo && e.number === number4);
+    if (idx < 0)
+      return null;
+    const [removed] = this.state.entries.splice(idx, 1);
+    this.save();
+    log2(`removed ${repo}#${number4} (${this.state.entries.length} entries remain)`);
+    return removed;
+  }
+  clear() {
+    const n = this.state.entries.length;
+    this.state.entries = [];
+    this.save();
+    log2(`cleared ${n} entries`);
+    return n;
+  }
+}
+
 // index.ts
-var CONFIG_DIR = join3(homedir3(), ".config", "claude-gh-channel");
-var SECRET_FILE = join3(CONFIG_DIR, "secret");
-var log2 = (...args) => console.error("[gh-channel]", ...args);
+var CONFIG_DIR = join4(homedir4(), ".config", "claude-gh-channel");
+var SECRET_FILE = join4(CONFIG_DIR, "secret");
+var log3 = (...args) => console.error("[gh-channel]", ...args);
 function resolveSecret() {
   if (process.env.GH_WEBHOOK_SECRET)
     return process.env.GH_WEBHOOK_SECRET;
-  if (existsSync2(SECRET_FILE))
-    return readFileSync2(SECRET_FILE, "utf8").trim();
-  log2(`FATAL: no secret found. Set GH_WEBHOOK_SECRET or write one to ${SECRET_FILE}. ` + `Run /gh-channel-setup to bootstrap.`);
+  if (existsSync3(SECRET_FILE))
+    return readFileSync3(SECRET_FILE, "utf8").trim();
+  log3(`FATAL: no secret found. Set GH_WEBHOOK_SECRET or write one to ${SECRET_FILE}. ` + `Run /gh-channel-setup to bootstrap.`);
   process.exit(1);
 }
 var WEBHOOK_SECRET = resolveSecret();
@@ -21432,7 +21528,7 @@ var config2;
 try {
   config2 = loadConfig();
 } catch (err) {
-  log2(`FATAL config load: ${err instanceof Error ? err.message : String(err)}`);
+  log3(`FATAL config load: ${err instanceof Error ? err.message : String(err)}`);
   process.exit(1);
 }
 var live = config2;
@@ -21456,11 +21552,11 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
   return await replyHandler(req.params.arguments);
 });
 server.oninitialized = async () => {
-  log2(`client initialized; ${live.subscriptions.length} subscription(s), ${live.routing_hints.length} routing hint(s)`);
+  log3(`client initialized; ${live.subscriptions.length} subscription(s), ${live.routing_hints.length} routing hint(s)`);
   if (!isQuiet()) {
     const pending = queue.pending();
     if (pending.length > 0) {
-      log2(`draining ${pending.length} queued event(s) on attach`);
+      log3(`draining ${pending.length} queued event(s) on attach`);
       for (const ev of pending) {
         try {
           const meta2 = JSON.parse(ev.meta_json);
@@ -21471,16 +21567,16 @@ server.oninitialized = async () => {
           });
           queue.markEmitted(ev.delivery_id);
         } catch (err) {
-          log2(`drain failed for ${ev.delivery_id}:`, err);
+          log3(`drain failed for ${ev.delivery_id}:`, err);
         }
       }
-      log2(`drain complete`);
+      log3(`drain complete`);
     }
   }
 };
 var transport = new StdioServerTransport;
 await server.connect(transport);
-log2("MCP stdio transport connected");
+log3("MCP stdio transport connected");
 async function verifySignature(body, header) {
   if (!header || !header.startsWith("sha256="))
     return false;
@@ -21605,7 +21701,7 @@ var totalEmitted = 0;
 var totalRejected = 0;
 var totalFiltered = 0;
 var totalQueued = 0;
-var pin = null;
+var watchlist = new Watchlist;
 function extractPrNumber(eventType, payload) {
   if (eventType === "pull_request")
     return payload.pull_request?.number ?? null;
@@ -21617,14 +21713,6 @@ function extractPrNumber(eventType, payload) {
     return payload.pull_request?.number ?? null;
   return null;
 }
-function pinMatches(repo, eventType, payload) {
-  if (!pin)
-    return false;
-  if (pin.repo !== repo)
-    return false;
-  const n = extractPrNumber(eventType, payload);
-  return n != null && n === pin.number;
-}
 var httpServer = Bun.serve({
   port: HTTP_PORT,
   hostname: "127.0.0.1",
@@ -21632,6 +21720,7 @@ var httpServer = Bun.serve({
     const url = new URL(req.url);
     if (req.method === "GET" && url.pathname === "/health") {
       const qstats = queue.stats();
+      const wl = watchlist.get();
       return Response.json({
         ok: true,
         port: HTTP_PORT,
@@ -21643,12 +21732,58 @@ var httpServer = Bun.serve({
         quiet: isQuiet(),
         paused_until: live.runtime.pause_until,
         subscriptions: live.subscriptions.length,
-        pin,
+        watchlist: { mode: wl.mode, count: wl.entries.length, entries: wl.entries },
         queue: qstats
       });
     }
+    if (req.method === "GET" && url.pathname === "/watch") {
+      return Response.json({ watchlist: watchlist.get() });
+    }
+    if (req.method === "POST" && url.pathname === "/watch") {
+      try {
+        const body = await req.json();
+        if (!body.repo || !body.number) {
+          return Response.json({ ok: false, error: "repo + number required" }, { status: 400 });
+        }
+        if (!/^[^/]+\/[^/]+$/.test(body.repo)) {
+          return Response.json({ ok: false, error: "repo must be owner/name" }, { status: 400 });
+        }
+        const entry = watchlist.add(body.repo, Number(body.number), body.as_skill ?? null);
+        return Response.json({ ok: true, entry, watchlist: watchlist.get() });
+      } catch (err) {
+        return Response.json({ ok: false, error: String(err) }, { status: 400 });
+      }
+    }
+    if (req.method === "DELETE" && url.pathname === "/watch") {
+      let body = {};
+      try {
+        body = await req.json();
+      } catch {}
+      if (body && body.repo && body.number) {
+        const removed = watchlist.remove(body.repo, Number(body.number));
+        if (!removed)
+          return Response.json({ ok: false, error: "not in watchlist" }, { status: 404 });
+        return Response.json({ ok: true, removed, watchlist: watchlist.get() });
+      }
+      const count = watchlist.clear();
+      return Response.json({ ok: true, cleared: count, watchlist: watchlist.get() });
+    }
+    if (req.method === "POST" && url.pathname === "/watch/mode") {
+      try {
+        const body = await req.json();
+        if (body.mode !== "hard" && body.mode !== "soft") {
+          return Response.json({ ok: false, error: "mode must be 'hard' or 'soft'" }, { status: 400 });
+        }
+        watchlist.setMode(body.mode);
+        return Response.json({ ok: true, watchlist: watchlist.get() });
+      } catch (err) {
+        return Response.json({ ok: false, error: String(err) }, { status: 400 });
+      }
+    }
     if (req.method === "GET" && url.pathname === "/pin") {
-      return Response.json({ pin });
+      const wl = watchlist.get();
+      const pin = wl.entries.length === 1 ? { ...wl.entries[0], mode: wl.mode, set_at: wl.entries[0].added_at } : null;
+      return Response.json({ pin, deprecated: "use /watch", watchlist_count: wl.entries.length });
     }
     if (req.method === "POST" && url.pathname === "/pin") {
       try {
@@ -21659,27 +21794,20 @@ var httpServer = Bun.serve({
         if (body.mode !== "hard" && body.mode !== "soft") {
           return Response.json({ ok: false, error: "mode must be 'hard' or 'soft'" }, { status: 400 });
         }
-        if (!/^[^/]+\/[^/]+$/.test(body.repo)) {
-          return Response.json({ ok: false, error: "repo must be owner/name" }, { status: 400 });
-        }
-        pin = {
-          repo: body.repo,
-          number: Number(body.number),
-          mode: body.mode,
-          as_skill: body.as_skill ?? null,
-          set_at: new Date().toISOString()
-        };
-        log2(`pin set: ${pin.repo}#${pin.number} (${pin.mode}${pin.as_skill ? `, as ${pin.as_skill}` : ""})`);
-        return Response.json({ ok: true, pin });
+        watchlist.clear();
+        watchlist.setMode(body.mode);
+        const entry = watchlist.add(body.repo, Number(body.number), body.as_skill ?? null);
+        log3(`pin (back-compat): cleared + mode=${body.mode} + added ${entry.repo}#${entry.number}`);
+        return Response.json({ ok: true, pin: { ...entry, mode: body.mode } });
       } catch (err) {
         return Response.json({ ok: false, error: String(err) }, { status: 400 });
       }
     }
     if (req.method === "DELETE" && url.pathname === "/pin") {
-      const prev = pin;
-      pin = null;
-      log2(`pin cleared (was ${prev ? `${prev.repo}#${prev.number}` : "none"})`);
-      return Response.json({ ok: true, was: prev });
+      const was = watchlist.get();
+      watchlist.clear();
+      log3(`pin cleared (back-compat): emptied watchlist (had ${was.entries.length} entries)`);
+      return Response.json({ ok: true, was });
     }
     if (req.method === "GET" && url.pathname === "/deliveries") {
       return Response.json({ count: deliveries.length, deliveries: deliveries.slice(-50) });
@@ -21701,7 +21829,7 @@ var httpServer = Bun.serve({
       try {
         const fresh = loadConfig(true);
         live = fresh;
-        log2(`reloaded config from disk; subs=${fresh.subscriptions.length} hints=${fresh.routing_hints.length}`);
+        log3(`reloaded config from disk; subs=${fresh.subscriptions.length} hints=${fresh.routing_hints.length}`);
         return Response.json({
           ok: true,
           subscriptions: fresh.subscriptions.length,
@@ -21710,7 +21838,7 @@ var httpServer = Bun.serve({
         });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        log2(`reload failed: ${msg}`);
+        log3(`reload failed: ${msg}`);
         return Response.json({ ok: false, error: msg }, { status: 500 });
       }
     }
@@ -21731,7 +21859,7 @@ var httpServer = Bun.serve({
           params: { content: ev.content, meta: meta2 }
         });
         queue.markEmitted(ev.delivery_id);
-        log2(`replayed delivery_id=${ev.delivery_id}`);
+        log3(`replayed delivery_id=${ev.delivery_id}`);
         return Response.json({ ok: true, replayed: ev.delivery_id });
       } catch (err) {
         return Response.json({ ok: false, error: String(err) }, { status: 500 });
@@ -21746,19 +21874,19 @@ var httpServer = Bun.serve({
       const ok = await verifySignature(rawBody, sigHeader);
       if (!ok) {
         totalRejected += 1;
-        log2(`REJECTED delivery_id=${deliveryId} event=${eventType} (bad signature)`);
+        log3(`REJECTED delivery_id=${deliveryId} event=${eventType} (bad signature)`);
         return new Response("invalid signature", { status: 401 });
       }
       let payload;
       try {
         payload = JSON.parse(rawBody);
       } catch (err) {
-        log2(`bad JSON for delivery_id=${deliveryId}:`, err);
+        log3(`bad JSON for delivery_id=${deliveryId}:`, err);
         return new Response("invalid json", { status: 400 });
       }
-      log2(`received delivery_id=${deliveryId} event=${eventType} action=${payload.action ?? "?"} repo=${payload.repository?.full_name ?? "?"}`);
+      log3(`received delivery_id=${deliveryId} event=${eventType} action=${payload.action ?? "?"} repo=${payload.repository?.full_name ?? "?"}`);
       if (eventType === "ping") {
-        log2(`ping zen="${payload.zen}"`);
+        log3(`ping zen="${payload.zen}"`);
         return Response.json({ ok: true, pong: true });
       }
       const repo = payload.repository?.full_name ?? "?";
@@ -21775,39 +21903,44 @@ var httpServer = Bun.serve({
       if (isRepoDisabled(repo)) {
         totalFiltered += 1;
         logEntry.filtered_reason = "repo_disabled";
-        log2(`filter: delivery_id=${deliveryId} repo=${repo} is in disabled_repos`);
+        log3(`filter: delivery_id=${deliveryId} repo=${repo} is in disabled_repos`);
         return Response.json({ ok: true, emitted: false, reason: "repo_disabled" });
       }
       const sub = matchSubscription(live, repo, eventType, payload);
       if (!sub) {
         totalFiltered += 1;
         logEntry.filtered_reason = "no_subscription_match";
-        log2(`filter: delivery_id=${deliveryId} no matching subscription (or filtered by author/ignore_if)`);
+        log3(`filter: delivery_id=${deliveryId} no matching subscription (or filtered by author/ignore_if)`);
         return Response.json({ ok: true, emitted: false, reason: "no_subscription_match" });
       }
       const summary = summarize(eventType, deliveryId, payload);
       if (!summary) {
         totalFiltered += 1;
         logEntry.filtered_reason = "no_summary";
-        log2(`filter: delivery_id=${deliveryId} no summary for event=${eventType} action=${payload.action}`);
+        log3(`filter: delivery_id=${deliveryId} no summary for event=${eventType} action=${payload.action}`);
         return Response.json({ ok: true, emitted: false, reason: "no_summary" });
       }
-      const matchesPin = pinMatches(repo, eventType, payload);
-      if (pin && pin.mode === "hard" && !matchesPin) {
+      const eventPrNumber = extractPrNumber(eventType, payload);
+      const onWatchlist = eventPrNumber != null && watchlist.matches(repo, eventPrNumber);
+      if (!watchlist.isEmpty() && watchlist.mode() === "hard" && !onWatchlist) {
         totalFiltered += 1;
-        logEntry.filtered_reason = "pin_hard_mismatch";
-        log2(`filter: delivery_id=${deliveryId} pinned to ${pin.repo}#${pin.number} (hard) \u2014 dropped`);
-        return Response.json({ ok: true, emitted: false, reason: "pin_hard_mismatch" });
+        logEntry.filtered_reason = "watchlist_hard_mismatch";
+        log3(`filter: delivery_id=${deliveryId} not on hard watchlist (${watchlist.get().entries.length} entries) \u2014 dropped`);
+        return Response.json({ ok: true, emitted: false, reason: "watchlist_hard_mismatch" });
       }
       const hintMeta = applyRoutingHints(live.routing_hints, live.user, live.vars, eventType, payload.action ?? null, payload);
       Object.assign(summary.meta, hintMeta);
-      if (pin && matchesPin) {
+      if (onWatchlist && eventPrNumber != null) {
+        const entry = watchlist.find(repo, eventPrNumber);
+        const mode = watchlist.mode();
+        summary.meta.watched = "true";
+        summary.meta.watch_mode = mode;
         summary.meta.pinned = "true";
-        summary.meta.pin_mode = pin.mode;
-        if (pin.mode === "soft") {
+        summary.meta.pin_mode = mode;
+        if (mode === "soft") {
           summary.meta.priority = "critical";
-          if (pin.as_skill) {
-            summary.meta.suggested_skill = pin.as_skill;
+          if (entry?.as_skill) {
+            summary.meta.suggested_skill = entry.as_skill;
           }
         }
       }
@@ -21821,13 +21954,13 @@ var httpServer = Bun.serve({
         meta: summary.meta
       });
       if (!newlyQueued) {
-        log2(`duplicate delivery_id=${deliveryId} \u2014 already in queue, acknowledging`);
+        log3(`duplicate delivery_id=${deliveryId} \u2014 already in queue, acknowledging`);
         return Response.json({ ok: true, emitted: false, reason: "duplicate" });
       }
       if (isQuiet()) {
         totalQueued += 1;
         logEntry.filtered_reason = "queued_quiet_or_paused";
-        log2(`queued (quiet/paused): delivery_id=${deliveryId}`);
+        log3(`queued (quiet/paused): delivery_id=${deliveryId}`);
         return Response.json({ ok: true, emitted: false, queued: true });
       }
       try {
@@ -21838,25 +21971,26 @@ var httpServer = Bun.serve({
         queue.markEmitted(deliveryId);
         totalEmitted += 1;
         logEntry.emitted = true;
-        log2(`emitted notification for delivery_id=${deliveryId}${summary.meta.suggested_skill ? ` skill=${summary.meta.suggested_skill}` : ""}${summary.meta.pinned ? " (pinned)" : ""}`);
-        if (pin && matchesPin && eventType === "pull_request" && payload.action === "closed") {
-          const prev = pin;
-          pin = null;
-          log2(`pin auto-cleared after ${prev.repo}#${prev.number} closed (merged=${payload.pull_request?.merged ?? false})`);
+        log3(`emitted notification for delivery_id=${deliveryId}${summary.meta.suggested_skill ? ` skill=${summary.meta.suggested_skill}` : ""}${summary.meta.pinned ? " (pinned)" : ""}`);
+        if (onWatchlist && eventPrNumber != null && eventType === "pull_request" && payload.action === "closed") {
+          const removed = watchlist.remove(repo, eventPrNumber);
+          if (removed) {
+            log3(`watchlist auto-remove: ${removed.repo}#${removed.number} closed ` + `(merged=${payload.pull_request?.merged ?? false}) \u2014 ${watchlist.get().entries.length} entries remain`);
+          }
         }
         return Response.json({ ok: true, emitted: true });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         logEntry.emit_error = msg;
-        log2(`emit failed for delivery_id=${deliveryId}:`, msg);
+        log3(`emit failed for delivery_id=${deliveryId}:`, msg);
         return Response.json({ ok: false, error: msg, queued: true }, { status: 500 });
       }
     }
     return new Response("Not found", { status: 404 });
   }
 });
-log2(`HTTP listener up on http://localhost:${httpServer.port}`);
-log2(`  config=${process.env.GH_CHANNEL_CONFIG ?? join3(homedir3(), ".config", "claude-gh-channel", "config.yaml")}`);
-log2(`  POST /webhook  \u2014 GitHub webhook receiver (HMAC verified)`);
-log2(`  GET  /health   \u2014 counters + state`);
-log2(`  GET  /deliveries \u2014 last 50 deliveries`);
+log3(`HTTP listener up on http://localhost:${httpServer.port}`);
+log3(`  config=${process.env.GH_CHANNEL_CONFIG ?? join4(homedir4(), ".config", "claude-gh-channel", "config.yaml")}`);
+log3(`  POST /webhook  \u2014 GitHub webhook receiver (HMAC verified)`);
+log3(`  GET  /health   \u2014 counters + state`);
+log3(`  GET  /deliveries \u2014 last 50 deliveries`);

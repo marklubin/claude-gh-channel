@@ -1,10 +1,18 @@
 ---
-description: Focus the watcher on a single GitHub PR. Hard mode drops every event that isn't on the pinned PR; soft mode keeps everything but decorates the pinned PR's events with `pinned: true` + `priority: critical` (and optionally a forced `suggested_skill`). Pin auto-clears when the pinned PR closes. Subcommands: `show`, `clear`.
+description: Tunnel-vision on a single PR — shorthand for `/gh-channel-watch clear` + `mode hard|soft` + `add pr <url>`. Use `/gh-channel-watch` instead if you want multiple PRs. Pin auto-clears when the pinned PR closes. Subcommands: `show`, `clear`.
 ---
 
 # /gh-channel-pin
 
-Narrow the watcher's attention to one PR. Useful when you're heads-down on something and don't want noise from other PRs in the same subscribed repo.
+Single-PR shorthand over the watchlist. Equivalent to:
+
+```
+/claude-gh-channel:gh-channel-watch clear
+/claude-gh-channel:gh-channel-watch mode <hard|soft>
+/claude-gh-channel:gh-channel-watch add pr <url> [--as <skill>]
+```
+
+If you want to focus on multiple PRs, use [`/claude-gh-channel:gh-channel-watch`](gh-channel-watch.md) directly.
 
 ## Syntax
 
