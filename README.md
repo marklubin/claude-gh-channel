@@ -76,14 +76,16 @@ claude --dangerously-load-development-channels plugin:claude-gh-channel@marklubi
 
 That's it. Open a PR in the repo you wired up and watch it land.
 
-The watcher command is long. Drop this in your `~/.zshrc` to alias it:
+The watcher command is long. Drop this in your `~/.zshrc` to alias it. `ghwatch` first ensures a live tunnel (self-healing — provisions a fresh one + repoints the webhook if the tunnel rotated or died), then attaches the watcher:
 
 ```bash
-alias ghwatch='claude --dangerously-load-development-channels plugin:claude-gh-channel@marklubin --dangerously-skip-permissions'
+GH_CHANNEL_DIR="$HOME/.claude/plugins/cache/marklubin/claude-gh-channel"
+alias ghwatch='bash "$(ls -d $GH_CHANNEL_DIR/*/scripts/ensure-tunnel.sh | sort -V | tail -1)"; claude --dangerously-load-development-channels plugin:claude-gh-channel@marklubin --dangerously-skip-permissions'
+alias ghtunnel='bash "$(ls -d $GH_CHANNEL_DIR/*/scripts/ensure-tunnel.sh | sort -V | tail -1)"'
 alias ghstatus='curl -s localhost:8788/health 2>/dev/null | jq || echo "no watcher running"'
 ```
 
-Then it's just `ghwatch`.
+Then it's just `ghwatch`. (The `ls ... | sort -V | tail -1` picks the highest installed version's script, so the alias keeps working across plugin updates.)
 
 (Detailed walkthrough with file layouts, what each step writes where, and how to verify it worked: [docs/walkthrough.md](docs/walkthrough.md). Full punch list of onboarding rough edges: [FOLLOWUPS.md](FOLLOWUPS.md).)
 
