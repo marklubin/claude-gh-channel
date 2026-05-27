@@ -194,9 +194,70 @@ Fixes, by effort:
 
 - **Built-in self-heal (default):** `ghwatch` runs `scripts/ensure-tunnel.sh` before attaching, and `/claude-gh-channel:gh-channel-tunnel` (or `ghtunnel`) does it on demand. The script health-checks the current tunnel and, if it's dead, provisions a fresh one + repoints the webhook automatically. A real HTTP response (even a 502 "server down") counts as alive; only a dead edge (timeout / no URL) triggers a refresh.
 - **If a fresh tunnel won't resolve:** that's Cloudflare's edge being slow to assign/propagate the hostname — not a config problem. Wait 30-60s and re-run `ghtunnel`.
-- **Durable fix:** a cloudflared **named tunnel** with a DNS record you control — stable URL, no rotation, no NXDOMAIN roulette. One-time setup, needs a Cloudflare account + domain. On the roadmap, not in v1.
+- **Durable fix: a named tunnel** with a DNS record you control — stable URL, no rotation, no NXDOMAIN roulette, multiple redundant edge connections. This is the recommended setup for anything you rely on. See [Named tunnel setup](#named-tunnel-setup-recommended) below.
 
 `/claude-gh-channel:gh-channel-status` reports whether the configured webhook URL matches the currently-running tunnel and whether it's reachable.
+
+## Named tunnel setup (recommended)
+
+A named cloudflared tunnel gives you a permanent hostname (e.g. `gh-gateway.yourdomain.com`) that never rotates. The webhook points at it once, forever. Requires a Cloudflare account + a domain on Cloudflare DNS.
+
+### One-time provisioning
+
+Two ways to create the tunnel + DNS record:
+
+**A. cloudflared CLI (browser OAuth):**
+
+```bash
+cloudflared tunnel login                                    # authorize your zone in the browser
+cloudflared tunnel create gh-gateway                        # writes ~/.cloudflared/<UUID>.json
+cloudflared tunnel route dns gh-gateway gh-gateway.yourdomain.com
+cat > ~/.cloudflared/config.yml <<YAML
+tunnel: gh-gateway
+credentials-file: $HOME/.cloudflared/<UUID>.json
+ingress:
+  - hostname: gh-gateway.yourdomain.com
+    service: http://localhost:8788
+  - service: http_status:404
+YAML
+```
+
+**B. Cloudflare API (no browser):** create the tunnel via `POST /accounts/{id}/cfd_tunnel` (needs an API token with **Account → Cloudflare Tunnel → Edit**), write the credentials JSON + config.yml yourself, then create the CNAME via `POST /zones/{zone_id}/dns_records` pointing `gh-gateway` → `<UUID>.cfargotunnel.com` (proxied). The DNS step needs **Zone → DNS → Edit** scoped to the zone — note that "DNS Write" attached to an *account* resource is NOT the same thing and won't work for zone records.
+
+### Tell the plugin to use it
+
+Add a `tunnel` block to `~/.config/claude-gh-channel/config.json`:
+
+```json
+{
+  "tunnel": { "mode": "named", "name": "gh-gateway", "hostname": "gh-gateway.yourdomain.com" },
+  "tunnel_url": "https://gh-gateway.yourdomain.com"
+}
+```
+
+Repoint the webhook once (permanent):
+
+```bash
+gh api -X PATCH repos/<owner>/<repo>/hooks/<id> --input - <<EOF
+{"config": {"url": "https://gh-gateway.yourdomain.com/webhook", "content_type": "json", "secret": "$(cat ~/.config/claude-gh-channel/secret)"}, "active": true}
+EOF
+```
+
+### Keep it running across reboots
+
+```bash
+bash "$(ls -d ~/.claude/plugins/cache/marklubin/claude-gh-channel/*/installer/install-named-tunnel.sh | sort -V | tail -1)"
+```
+
+That installs a LaunchAgent (`com.marklubin.claude-gh-channel.named-tunnel`) that runs `cloudflared tunnel run gh-gateway` with `KeepAlive`, so the tunnel comes back on crash and on login.
+
+### How named mode changes the self-heal
+
+With `tunnel.mode: named`, `ensure-tunnel.sh` (via `ghtunnel` / `ghwatch`) no longer provisions quick tunnels or repoints the webhook. It just checks the named hostname:
+- `200`/`404`/etc → healthy, no-op
+- `502` → connector up, server not bound yet (fine — attaches with the watcher)
+- `530` (Cloudflare error 1033) → connector down → kickstart the LaunchAgent / restart `cloudflared tunnel run`
+- `000` → DNS not resolving (shouldn't happen for a named tunnel)
 
 ## When events drop (and how you know)
 

@@ -25,6 +25,77 @@ PIDFILE="$CONFIG_DIR/cloudflared.pid"
 
 log() { echo "[ensure-tunnel] $*" >&2; }
 
+CONFIG_JSON="$CONFIG_DIR/config.json"
+
+# ── Tunnel mode (named | quick). Default quick for back-compat. ─────────────
+tunnel_get() {  # $1 = jq path under .tunnel
+  [ -f "$CONFIG_JSON" ] || { echo ""; return; }
+  jq -r ".tunnel.$1 // empty" "$CONFIG_JSON" 2>/dev/null || echo ""
+}
+TUNNEL_MODE="$(tunnel_get mode)"
+TUNNEL_MODE="${TUNNEL_MODE:-quick}"
+
+# ── Named-tunnel path ───────────────────────────────────────────────────────
+# A named cloudflared tunnel has a permanent hostname + DNS record. We never
+# provision a new one or repoint the webhook — we just make sure the tunnel
+# process is running and the hostname routes.
+if [ "$TUNNEL_MODE" = "named" ]; then
+  NAME="$(tunnel_get name)"
+  HOSTNAME="$(tunnel_get hostname)"
+  if [ -z "$NAME" ] || [ -z "$HOSTNAME" ]; then
+    log "FATAL: tunnel.mode=named but tunnel.name/hostname missing in $CONFIG_JSON"
+    exit 1
+  fi
+  URL="https://$HOSTNAME"
+
+  # Health semantics for a Cloudflare-proxied named tunnel:
+  #   200/404/etc → connector up + server reachable (healthy)
+  #   502/504     → connector up, but localhost server not bound (FINE — the
+  #                 server attaches with the watcher; don't restart the tunnel)
+  #   530         → Cloudflare error 1033: no connector registered → tunnel
+  #                 process is DOWN → restart
+  #   000         → DNS not resolving (shouldn't happen for a named tunnel)
+  named_tunnel_down() {  # true (0) if the connector is down
+    local c="$1"
+    [ "$c" = "000" ] || [ "$c" = "530" ]
+  }
+
+  code=$(curl -s -o /dev/null -m 8 -w "%{http_code}" "$URL/health" 2>/dev/null || echo "000")
+  if ! named_tunnel_down "$code"; then
+    log "named tunnel healthy: $URL (HTTP $code)"
+    echo "$URL" > "$URL_FILE"
+    exit 0
+  fi
+
+  log "named tunnel '$NAME' connector down (HTTP $code) — starting it"
+  # Prefer the launchd service if installed; else run in background.
+  PLIST_LABEL="com.marklubin.claude-gh-channel.named-tunnel"
+  if launchctl print "gui/$(id -u)/$PLIST_LABEL" >/dev/null 2>&1; then
+    launchctl kickstart -k "gui/$(id -u)/$PLIST_LABEL" 2>/dev/null || true
+    log "kickstarted launchd service $PLIST_LABEL"
+  else
+    if ! pgrep -f "cloudflared tunnel run $NAME" >/dev/null 2>&1; then
+      nohup cloudflared tunnel run "$NAME" > "$LOG" 2>&1 &
+      echo $! > "$PIDFILE"
+      log "started cloudflared tunnel run $NAME (pid $(cat "$PIDFILE"))"
+    fi
+  fi
+
+  # Wait for the connector to register + route
+  for _ in $(seq 1 15); do
+    code=$(curl -s -o /dev/null -m 6 -w "%{http_code}" "$URL/health" 2>/dev/null || echo "000")
+    named_tunnel_down "$code" || break
+    sleep 2
+  done
+  if named_tunnel_down "$code"; then
+    log "WARN: named tunnel still down after start (HTTP $code). Check: cloudflared tunnel info $NAME"
+    exit 1
+  fi
+  log "named tunnel up: $URL (HTTP $code)"
+  echo "$URL" > "$URL_FILE"
+  exit 0
+fi
+
 # ── Resolve the repo to repoint the webhook on ──────────────────────────────
 resolve_repo() {
   if [ -f "$CONFIG_DIR/config.json" ]; then

@@ -9,7 +9,7 @@ It's a personal tool. macOS, single laptop, one watcher Claude at a time.
 > [!IMPORTANT]
 > **Two things will bite you before anything else — read these first:**
 >
-> 1. **Cloudflare quick tunnels are flaky.** This plugin uses cloudflared's free, account-less "quick tunnels" to get GitHub webhooks into your laptop. They rotate URLs on restart, drop mid-session, and their DNS sometimes fails to propagate for minutes (observed `NXDOMAIN` and `530`s under service load). The plugin **self-heals** — `ghwatch` / `/gh-channel-tunnel` auto-provision a fresh tunnel and repoint the webhook — but if a freshly-created hostname won't resolve, that's Cloudflare's side, not yours. The durable fix is a **named tunnel** with your own DNS (on the roadmap). See [Known limitations](#known-limitations-v1).
+> 1. **Cloudflare quick tunnels are flaky — use a named tunnel for anything you rely on.** By default this plugin uses cloudflared's free, account-less "quick tunnels," which rotate URLs on restart, drop mid-session, and sometimes fail DNS propagation for minutes (`NXDOMAIN` / `530` under service load). The plugin self-heals (`ghwatch` / `/gh-channel-tunnel` reprovision + repoint), but the real fix is a **named tunnel** with a domain you control — stable hostname, no rotation, redundant edges. Setup walkthrough: [Named tunnel setup](docs/walkthrough.md#named-tunnel-setup-recommended). Once configured (`tunnel.mode: named` in config.json), the self-heal just keeps the named tunnel's connector alive instead of churning URLs.
 > 2. **Channels are gated on Team/Enterprise plans.** If your Claude Code plan is "Claude Team" or "Enterprise", an admin must set `channelsEnabled: true` in [managed settings](https://code.claude.com/docs/en/server-managed-settings) or channel notifications are silently dropped before reaching the watcher. Everything server-side (watchlist, auto-watch, `cmux notify`) still works without it — you just won't get events injected into Claude's reasoning context. See [Known limitations](#known-limitations-v1).
 
 ## What you get
@@ -298,7 +298,7 @@ Add another entry under `subscriptions:` in `config.yaml`, then register a webho
 
 | Limitation | What it means in practice |
 |---|---|
-| **Cloudflare quick-tunnel flakiness** | This is the single most likely thing to break a live setup. Account-less `*.trycloudflare.com` tunnels have no uptime guarantee: they rotate URLs on restart, drop mid-session, and their DNS can take minutes to propagate or fail outright (`NXDOMAIN` / `530` under service load). The plugin self-heals (`ghtunnel` / `ghwatch` provision fresh + repoint the webhook), but it can't fix Cloudflare's edge being slow to assign a hostname. **Durable fix: a named cloudflared tunnel with a DNS record you control** (stable URL, no rotation) — on the roadmap, needs a Cloudflare account + domain. |
+| **Cloudflare quick-tunnel flakiness (default mode)** | Account-less `*.trycloudflare.com` tunnels have no uptime guarantee: they rotate URLs on restart, drop mid-session, and their DNS can take minutes to propagate or fail outright (`NXDOMAIN` / `530` under service load). The plugin self-heals (`ghtunnel` / `ghwatch` provision fresh + repoint the webhook), but it can't fix Cloudflare's edge being slow to assign a hostname. **Fix: switch to a named tunnel** (`tunnel.mode: named`) — stable URL, no rotation, redundant edges, survives reboot via the bundled LaunchAgent. Needs a Cloudflare account + a domain on Cloudflare. Setup: [Named tunnel setup](docs/walkthrough.md#named-tunnel-setup-recommended). |
 | **`channelsEnabled` org policy on Team/Enterprise plans** | Channel notifications gated by managed settings. The watcher boots and shows `blocked by org policy / Inbound messages will be silently dropped`. Fix: admin sets `channelsEnabled: true` in [managed settings](https://code.claude.com/docs/en/server-managed-settings). Until then, channel-into-pane is off but `auto_watch` + `cmux notify` still surface events. |
 | **Plain `--channels` (no `--dangerously-load-development-channels`)** | Anthropic curates the channels allowlist; self-published channel plugins always need the dev flag during the research preview. Out of our control. Use the `ghwatch` alias to make it ergonomic. |
 | Server runs inside the Claude session (no separate daemon) | If no watcher is attached when GitHub fires a webhook, the tunnel hop fails and GitHub retries for ~8 hours. Workaround: keep a watcher attached. v2 will split the daemon from the Claude session. |
@@ -333,8 +333,9 @@ claude-gh-channel/                       # marketplace root (this repo)
 │       ├── commands/                    # 12 slash commands (setup + lifecycle)
 │       ├── skills/                      # Four handler skills + shared contract
 │       ├── scripts/
-│       │   └── ensure-tunnel.sh         # Self-healing tunnel provisioner
-│       └── installer/                   # macOS launchd template + install/uninstall
+│       │   └── ensure-tunnel.sh         # Self-healing tunnel (quick + named modes)
+│       └── installer/                   # macOS launchd templates + install scripts
+│                                        #   quick-tunnel + named-tunnel variants
 ├── docs/walkthrough.md                  # Deep dive with file layouts + debugging
 ├── spike/                               # M0-M5 evidence — read these to understand decisions
 │   ├── 0.1-channel-roundtrip/           # Channel capability proven
@@ -350,10 +351,11 @@ claude-gh-channel/                       # marketplace root (this repo)
 
 ## Status
 
-**v0.1.7.** Bootstrap, the four built-in skills, the lifecycle commands, the SQLite queue, the config-driven steering layer, the persistent watchlist + auto-watch, the self-bundled server, and the self-healing tunnel are all landed and end-to-end tested (see `spike/M2-M5-INTEGRATION-EVIDENCE.md` + the commit history).
+**v0.1.8.** Bootstrap, the four built-in skills, the lifecycle commands, the SQLite queue, the config-driven steering layer, the persistent watchlist + auto-watch, the self-bundled server, and the self-healing tunnel are all landed and end-to-end tested (see `spike/M2-M5-INTEGRATION-EVIDENCE.md` + the commit history).
+
+Named-tunnel support landed in v0.1.8 (`tunnel.mode: named` + `install-named-tunnel.sh` LaunchAgent) — the durable fix for quick-tunnel flakiness.
 
 Roadmap (not in v1):
-- **Named cloudflared tunnel + DNS** — the durable fix for the quick-tunnel flakiness. The biggest remaining reliability gap.
 - Standalone daemon so events don't drop when no watcher is attached
 - Multi-repo first-class config (`/gh-channel-setup` registering N webhooks)
 - Sibling adapters for Linear / Slack / Recall
