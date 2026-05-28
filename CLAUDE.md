@@ -2,6 +2,12 @@
 
 Project-local guidance for any Claude session working in this repo.
 
+> **Process foundations:** development for this repo follows two documented processes — read them before substantive work:
+> - [`docs/adr/README.md`](docs/adr/README.md) — when/how to write an ADR (architectural decision record).
+> - [`docs/adr/0002-development-process.md`](docs/adr/0002-development-process.md) — the ADR → issue → PR chain, milestone-grouped PR sizing, design-vs-code review separation.
+>
+> The summary you need before opening any PR: **design is settled in an ADR or issue thread *before* the PR opens.** PRs are narrowly "implements the agreed shape, yes/no." Default scope is **one functional milestone per PR**, typically matching one issue. Don't open a PR for WIP — wait until the issue is functionally complete. Refactor escape hatch: split into "mechanical refactor first, behavior change second" if it reduces review burden. See ADR-0002 for the full convention.
+
 ## Hard rule: every change gets a real-Claude E2E through a cmux pane
 
 Until shipping a robust install path + automated CI for this plugin is on the roadmap, **every code change** in this repo must be verified end-to-end before being called done. "Done" means:
