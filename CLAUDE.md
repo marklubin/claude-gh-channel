@@ -19,7 +19,7 @@ Until shipping a robust install path + automated CI for this plugin is on the ro
    - In the `/plugin` UI's Marketplaces tab, navigate to `marklubin`, press `u`, Enter to confirm pending update.
    - `/reload-plugins`
 4. Restart the watcher pane (`/exit` the existing one or close its surface, relaunch via `ghwatch` or the equivalent `claude --dangerously-load-development-channels plugin:claude-gh-channel@marklubin --dangerously-skip-permissions`).
-5. Verify the cached server is running the new code: `lsof -nP -iTCP:8788 -sTCP:LISTEN` + check the PID's command line points at `~/.claude/plugins/cache/marklubin/claude-gh-channel/<NEW-VERSION>/server/index.ts`.
+5. Verify the cached server is running the new code: `lsof -nP -iTCP:8788 -sTCP:LISTEN` + check the PID's command line points at `~/.claude/plugins/cache/marklubin/claude-gh-channel/<NEW-VERSION>/server/server.bundle.js` (the pre-built bundle, not `index.ts` — see ADR-0001 / v0.1.4 commit for why).
 6. If the change touches webhook ingress, open a real GH PR in this repo (`marklubin/claude-gh-channel`) and confirm the event lands in the watcher pane with the expected meta. Close + clean up the trigger PR/branch afterward.
 7. If the change touches a slash command, run that command in the watcher pane (or another pane that has the plugin installed) and verify the observable side effect (`/health`, `/pin`, the SQLite queue, the drafts dir, the cmux sidebar — whichever applies).
 

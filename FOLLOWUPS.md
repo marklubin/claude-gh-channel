@@ -1,5 +1,7 @@
 # Followups
 
+> **Status (2026-05-28):** This file pre-dates ADR-0002 and is slated for migration to GitHub issues with the `onboarding` label (see [ADR-0002 open follow-ups](docs/adr/0002-development-process.md#open-follow-ups)). Entries below are kept for historical record until migration. New rough edges should go to issues, not here.
+
 Deferred work, in priority order. Add new entries with date + concrete observations from the session that surfaced them. Don't prune — entries move to a `Done` section with completion date when shipped.
 
 ---
@@ -16,7 +18,7 @@ Current install requires too many things to go right manually. Specific friction
 
 2. **Self-published channels always need `--dangerously-load-development-channels`.** The channels allowlist is Anthropic-curated. Plain `--channels plugin:<name>@<marketplace>` fails with "not on the approved allowlist." Watcher attachment is therefore a long, scary-looking command with an interactive "I am using this for local development" confirmation prompt every time.
 
-2b. **`channelsEnabled` managed-settings gate on Team/Enterprise plans (2026-05-26).** Even with the `--dangerously-load-development-channels` flag, Team and Enterprise organizations need `channelsEnabled: true` in [managed settings](https://code.claude.com/docs/en/server-managed-settings) for channel notifications to actually reach the watcher's context. Without it, the watcher loads, the MCP server runs, slash commands work — but `notifications/claude/channel` are silently dropped before reaching Claude. Observed mid-day 2026-05-26: yesterday's E2E worked, today's didn't. Workaround for the receive surface: the 0.1.6 `auto_watch` + `cmux notify` path works server-side regardless of `channelsEnabled`, so PR events still surface as desktop notifications and watchlist mutations — just without watcher-Claude reasoning over them until the gate flips.
+2b. ~~**`channelsEnabled` managed-settings gate on Team/Enterprise plans (2026-05-26).**~~ **RESOLVED on this machine 2026-05-27** — admin set `channelsEnabled: true`; verified by injecting a synthetic event and seeing it land in the watcher pane. Documented in README + walkthrough as a still-relevant Known Limitation because *other* Team/Enterprise users on a fresh install will hit this gate until their admin flips it. The 0.1.6 `auto_watch` + `cmux notify` path documented here remains the fallback for anyone in that pre-flip state.
 
 3. **Cache refresh requires a version bump.** Edit `plugin.json`, push, run `/plugin marketplace update <name>` — the marketplace updates but the installed cache silently stays on the old version. Symptom: changes don't take effect. Discovered by hand only after several "why isn't this working" cycles. The version bump should probably either be automatic or there should be an obvious user-side `/plugin reinstall` that forces re-copy.
 
